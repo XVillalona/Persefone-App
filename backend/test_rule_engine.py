@@ -163,5 +163,87 @@ class TestRuleEngine(unittest.TestCase):
         noc_line = next(l for l in res["lineas_costo"] if l["codigo"] == "RECARGO_NOCTURNO")
         self.assertEqual(noc_line["total"], 75.00)
 
+    def test_costo_reclamado_aviam_vs_auditado(self):
+        """Verifica que se calculen costo_reclamado_aviam y ahorro_auditoria_usd"""
+        orden = {
+            "numero_orden": "TEST_CLAIMED",
+            "aerolinea": "ARAJET",
+            "tipo_aeronave": "B737 MAX 8",
+            "matricula": "HI1098",
+            "llegada": "2026-05-22T10:00",
+            "salida": "2026-05-22T11:00",
+            "servicios": [
+                {"codigo": "RAMP_PACKAGE", "marcado": True},
+                {"codigo": "COBUS", "marcado": True, "cantidad": 1},
+                {"codigo": "POTABLE_WATER", "marcado": True},
+                {"codigo": "LAVATORY", "marcado": True},
+                {"codigo": "GPU", "marcado": True, "valor_raw": "JB"}
+            ],
+            "firmas": {"aviam": True, "aerolinea": True}
+        }
+        res = self.engine.calcular_orden(orden)
+        # Conciliado Arajet: Paquete $500 + Crew Cobus $0 + Combo Agua/Lav $50 + GPU JB $0 = $550.00
+        self.assertEqual(res["costo_total_esperado"], 550.00)
+        # Reclamado AVIAM en papel: Paquete $500 + Cobus $125 + Agua $50 + Lav $80 ($130) + GPU JB pretendida $150 = $905.00
+        self.assertEqual(res["costo_reclamado_aviam"], 905.00)
+        # Ahorro Arajet: 905 - 550 = 355.00
+        self.assertEqual(res["ahorro_auditoria_usd"], 355.00)
+
+    def test_clausula_12_estricta_turnaround_corto(self):
+        """Cláusula 12 estricta: en vuelo <= 70 min, PUSHBACK y Manpower/GSE se descuentan a $0.0"""
+        orden = {
+            "numero_orden": "TEST_CLAUSE12",
+            "aerolinea": "ARAJET",
+            "tipo_aeronave": "B737 MAX 8",
+            "matricula": "HI1098",
+            "llegada": "2026-05-22T10:00",
+            "salida": "2026-05-22T11:02", # 62 min <= 70 min
+            "servicios": [
+                {"codigo": "RAMP_PACKAGE", "marcado": True},
+                {"codigo": "PUSHBACK", "marcado": True, "valor_raw": "1"},
+                {"codigo": "MAN_HOUR", "marcado": True, "valor_raw": "4/1"},
+                {"codigo": "BAGGAGE_CART", "marcado": True, "valor_raw": "1"}
+            ],
+            "firmas": {"aviam": True, "aerolinea": True},
+            "aplicar_clausula_12_estricta": True
+        }
+        res = self.engine.calcular_orden(orden)
+        self.assertFalse(res["excede_turnaround"])
+        # Con Cláusula 12 estricta, todos los adicionales incluidos en turnaround van a $0.0
+        self.assertEqual(res["costo_adicionales"], 0.0)
+        self.assertEqual(res["costo_total_esperado"], 500.00)
+        # Pero el reclamado AVIAM en papel mantiene los costos brutos:
+        # Paquete 500 + Pushback 150 + Man Hour (4h x 16 = 64) + Baggage Cart (20) = 734.00
+        self.assertEqual(res["costo_reclamado_aviam"], 734.00)
+        self.assertEqual(res["ahorro_auditoria_usd"], 234.00)
+        # Alertas de Cláusula 12 presentes
+        codigos_alertas = [a["codigo"] for a in res["alertas"]]
+        self.assertIn("PUSHBACK_INCLUIDO_PAQUETE", codigos_alertas)
+        self.assertIn("MAN_HOUR_DENTRO_DE_TURNAROUND", codigos_alertas)
+
+    def test_cantidad_auditada_manual(self):
+        """Permite que el usuario defina explícitamente cantidad_auditada"""
+        orden = {
+            "numero_orden": "TEST_MANUAL_AUDIT",
+            "aerolinea": "ARAJET",
+            "tipo_aeronave": "B737 MAX 8",
+            "matricula": "HI1098",
+            "llegada": "2026-05-22T10:00",
+            "salida": "2026-05-22T11:00",
+            "servicios": [
+                {"codigo": "RAMP_PACKAGE", "marcado": True},
+                {"codigo": "MAN_HOUR", "marcado": True, "valor_raw": "4/2", "cantidad_auditada": 2.0} # 2 horas en vez de 8
+            ],
+            "firmas": {"aviam": True, "aerolinea": True}
+        }
+        res = self.engine.calcular_orden(orden)
+        mh_line = next(l for l in res["lineas_costo"] if l["codigo"] == "MAN_HOUR")
+        self.assertEqual(mh_line["cantidad"], 2.0)
+        self.assertEqual(mh_line["total"], 32.00) # 2 x $16
+        self.assertEqual(mh_line["cantidad_reclamada_aviam"], 8.0)
+        self.assertEqual(mh_line["total_reclamado_aviam"], 128.00)
+        self.assertEqual(mh_line["ahorro_usd"], 96.00)
+
 if __name__ == "__main__":
     unittest.main()
+

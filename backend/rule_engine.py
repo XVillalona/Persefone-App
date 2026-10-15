@@ -111,6 +111,7 @@ class RuleEngine:
         aplica_concesion = es_arajet and es_b737_max8 and self.config.get("concesion_arajet", {}).get("activa", True)
 
         # 1. Fechas y Horas (Cálculo de tiempo en tierra)
+        aplicar_clausula_12_estricta = bool(orden.get("aplicar_clausula_12_estricta", False))
         dt_llegada = self._parse_datetime(orden.get("llegada"))
         dt_salida = self._parse_datetime(orden.get("salida"))
         tiempo_en_tierra_min = None
@@ -179,6 +180,9 @@ class RuleEngine:
                     "unidad": "turnaround",
                     "precio_unitario": 500.00,
                     "total": 500.00,
+                    "cantidad_reclamada_aviam": 1.0,
+                    "total_reclamado_aviam": 500.00,
+                    "ahorro_usd": 0.0,
                     "regla": "Concesión 2: Tarifa plana USD 500 turnaround (70 min)",
                     "es_adicional": False
                 })
@@ -200,6 +204,9 @@ class RuleEngine:
                 "unidad": "turnaround",
                 "precio_unitario": costo_base,
                 "total": costo_base,
+                "cantidad_reclamada_aviam": 1.0,
+                "total_reclamado_aviam": costo_base,
+                "ahorro_usd": 0.0,
                 "regla": "Tarifario 2025 Tabla 1",
                 "es_adicional": False
             })
@@ -217,6 +224,9 @@ class RuleEngine:
                     "unidad": "servicio",
                     "precio_unitario": 0.0,
                     "total": 0.0,
+                    "cantidad_reclamada_aviam": 1.0,
+                    "total_reclamado_aviam": 125.00,
+                    "ahorro_usd": 125.00,
                     "regla": "Concesión 6: 1 transporte de tripulación gratis por turnaround",
                     "es_adicional": False
                 })
@@ -225,6 +235,7 @@ class RuleEngine:
                 extra_cant = cant_cobus - (1 if aplica_concesion else 0)
                 precio_cobus = 125.00
                 total_cobus = extra_cant * precio_cobus
+                tot_rec = round(float(cant_cobus) * 125.00, 2)
                 lineas_costo.append({
                     "codigo": "COBUS_EXTRA",
                     "descripcion": f"Cobus adicional ({extra_cant} servicio/s)",
@@ -232,6 +243,9 @@ class RuleEngine:
                     "unidad": "servicio",
                     "precio_unitario": precio_cobus,
                     "total": total_cobus,
+                    "cantidad_reclamada_aviam": float(cant_cobus),
+                    "total_reclamado_aviam": tot_rec,
+                    "ahorro_usd": max(0.0, round(tot_rec - total_cobus, 2)),
                     "regla": "Tabla 6: Cobus Narrowbody USD 125",
                     "es_adicional": True
                 })
@@ -248,11 +262,15 @@ class RuleEngine:
                     "unidad": "servicio combinado",
                     "precio_unitario": 50.00,
                     "total": 50.00,
+                    "cantidad_reclamada_aviam": 2.0,
+                    "total_reclamado_aviam": 130.00,
+                    "ahorro_usd": 80.00,
                     "regla": "Concesión 4: Tarifa plana USD 50.00 combinada por ambos servicios",
                     "es_adicional": True
                 })
             elif tiene_agua or tiene_banos:
                 svc_desc = "Agua Potable" if tiene_agua else "Baños / Lavatory"
+                tot_rec = 50.00 if tiene_agua else 80.00
                 lineas_costo.append({
                     "codigo": "WATER_OR_LAVATORY",
                     "descripcion": f"Servicio individual de {svc_desc}",
@@ -260,6 +278,9 @@ class RuleEngine:
                     "unidad": "servicio",
                     "precio_unitario": 50.00,
                     "total": 50.00,
+                    "cantidad_reclamada_aviam": 1.0,
+                    "total_reclamado_aviam": tot_rec,
+                    "ahorro_usd": max(0.0, round(tot_rec - 50.00, 2)),
                     "regla": "Concesión 4 (Tarifa unificada)",
                     "es_adicional": True
                 })
@@ -272,6 +293,9 @@ class RuleEngine:
                     "unidad": "servicio",
                     "precio_unitario": 60.00,
                     "total": 60.00,
+                    "cantidad_reclamada_aviam": 1.0,
+                    "total_reclamado_aviam": 60.00,
+                    "ahorro_usd": 0.0,
                     "regla": "Tabla 6",
                     "es_adicional": True
                 })
@@ -283,6 +307,9 @@ class RuleEngine:
                     "unidad": "servicio",
                     "precio_unitario": 80.00,
                     "total": 80.00,
+                    "cantidad_reclamada_aviam": 1.0,
+                    "total_reclamado_aviam": 80.00,
+                    "ahorro_usd": 0.0,
                     "regla": "Tabla 6",
                     "es_adicional": True
                 })
@@ -309,6 +336,9 @@ class RuleEngine:
                     "unidad": "servicio",
                     "precio_unitario": 70.00,
                     "total": 70.00,
+                    "cantidad_reclamada_aviam": 1.0,
+                    "total_reclamado_aviam": 85.00 if "2" in valor_raw else 70.00,
+                    "ahorro_usd": 15.00 if "2" in valor_raw else 0.0,
                     "regla": "Concesión 7 / Tabla 3: Tipo 1 USD 70.00 para turnarounds <= 70 min",
                     "es_adicional": True
                 })
@@ -333,6 +363,9 @@ class RuleEngine:
                     "unidad": "servicio",
                     "precio_unitario": tarifa_limpieza,
                     "total": tarifa_limpieza,
+                    "cantidad_reclamada_aviam": 1.0,
+                    "total_reclamado_aviam": tarifa_limpieza,
+                    "ahorro_usd": 0.0,
                     "regla": regla_str,
                     "es_adicional": True
                 })
@@ -354,7 +387,7 @@ class RuleEngine:
             es_jb = gpu_val_raw.upper() == "JB" or "JB" in gpu_val_raw.upper()
 
             if es_jb:
-                # Conectado a Jet Bridge
+                # Conectado a Jet Bridge (Arajet auditado = 0, pero AVIAM en papel pretendía cobrar 1 hora base $150)
                 lineas_costo.append({
                     "codigo": "GPU_JB",
                     "descripcion": "Energía Eléctrica vía Jet Bridge (JB)",
@@ -362,10 +395,28 @@ class RuleEngine:
                     "unidad": "conexión JB",
                     "precio_unitario": 0.0,
                     "total": 0.0,
+                    "cantidad_reclamada_aviam": 1.0,
+                    "total_reclamado_aviam": 150.00,
+                    "ahorro_usd": 150.00,
                     "regla": "Conexión a puente de abordaje (sin cargo GPU móvil)",
                     "es_adicional": False
                 })
             else:
+                # Calcular horas reclamadas por AVIAM en papel (valor_raw, ej. 1/3 -> 3 horas)
+                cant_rec_gpu = 1.0
+                if "/" in gpu_val_raw:
+                    parts = gpu_val_raw.split("/")
+                    try:
+                        p1 = float(parts[0].strip())
+                        p2 = float(parts[1].strip())
+                        cant_rec_gpu = p2 if p1 == 1.0 and p2 > 1.0 else (p1 * p2 if p2 > 0 else 1.0)
+                    except:
+                        cant_rec_gpu = 1.0
+                else:
+                    c, h, _ = self._parse_fraction_or_number(gpu_val_raw)
+                    cant_rec_gpu = h if h is not None else 1.0
+                tot_rec_gpu = round(cant_rec_gpu * 150.00, 2)
+
                 # Cobro por tiempo Concesión 9: Mínimo 1 hora ($150), luego bloques de 30 min ($75) redondeados arriba
                 if gpu_minutos is None:
                     # Estimar a partir de valor_raw (ej. 1/2 hora -> mínimo 1 hora por regla)
@@ -381,6 +432,16 @@ class RuleEngine:
                     total_gpu = 150.00 + (bloques * 75.00)
                     desc_gpu = f"GPU: 1h base ($150) + {bloques} bloque/s de 30m ({minutos_extra}m extra = ${bloques*75})"
 
+                # Si el usuario editó cantidad auditada explícitamente
+                if gpu_item.get("cantidad_auditada") is not None:
+                    cant_aud = float(gpu_item["cantidad_auditada"])
+                    if cant_aud <= 1.0:
+                        total_gpu = 150.00 if cant_aud > 0 else 0.0
+                    else:
+                        extra_h = cant_aud - 1.0
+                        blks = int((extra_h * 60 + 29) // 30)
+                        total_gpu = 150.00 + (blks * 75.00)
+
                 lineas_costo.append({
                     "codigo": "GPU",
                     "descripcion": desc_gpu,
@@ -388,6 +449,9 @@ class RuleEngine:
                     "unidad": "horas",
                     "precio_unitario": 150.00,
                     "total": total_gpu,
+                    "cantidad_reclamada_aviam": cant_rec_gpu,
+                    "total_reclamado_aviam": tot_rec_gpu,
+                    "ahorro_usd": max(0.0, round(tot_rec_gpu - total_gpu, 2)),
                     "regla": "Concesión 9: Mínimo 1 hora ($150) + bloques 30 min ($75) redondeo hacia arriba",
                     "es_adicional": True
                 })
@@ -415,16 +479,37 @@ class RuleEngine:
                     "unidad": "conexión JB",
                     "precio_unitario": 0.0,
                     "total": 0.0,
+                    "cantidad_reclamada_aviam": 1.0,
+                    "total_reclamado_aviam": 155.00,
+                    "ahorro_usd": 155.00,
                     "regla": "Conexión a puente de abordaje",
                     "es_adicional": False
                 })
             else:
+                # Calcular horas reclamadas por AVIAM en papel (valor_raw, ej. 1/3 -> 3 horas)
+                cant_rec_acu = 1.0
+                if "/" in acu_val_raw:
+                    parts = acu_val_raw.split("/")
+                    try:
+                        p1 = float(parts[0].strip())
+                        p2 = float(parts[1].strip())
+                        cant_rec_acu = p2 if p1 == 1.0 and p2 > 1.0 else (p1 * p2 if p2 > 0 else 1.0)
+                    except:
+                        cant_rec_acu = 1.0
+                else:
+                    c, h, _ = self._parse_fraction_or_number(acu_val_raw)
+                    cant_rec_acu = h if h is not None else 1.0
+                tot_rec_acu = round(cant_rec_acu * 155.00, 2)
+
                 if acu_minutos is None:
                     cant, hrs, conf = self._parse_fraction_or_number(acu_val_raw)
                     acu_minutos = int((hrs or 1.0) * 60)
                 
                 horas_acu = round(acu_minutos / 60.0, 2)
+                if acu_item.get("cantidad_auditada") is not None:
+                    horas_acu = float(acu_item["cantidad_auditada"])
                 total_acu = round(horas_acu * 155.00, 2)
+
                 lineas_costo.append({
                     "codigo": "ACU",
                     "descripcion": f"Aire Acondicionado Móvil ({acu_minutos} min / {horas_acu} hrs)",
@@ -432,6 +517,9 @@ class RuleEngine:
                     "unidad": "horas",
                     "precio_unitario": 155.00,
                     "total": total_acu,
+                    "cantidad_reclamada_aviam": cant_rec_acu,
+                    "total_reclamado_aviam": tot_rec_acu,
+                    "ahorro_usd": max(0.0, round(tot_rec_acu - total_acu, 2)),
                     "regla": "Tabla 6: USD 155.00 / hora",
                     "es_adicional": True
                 })
@@ -453,25 +541,78 @@ class RuleEngine:
             if item and item.get("marcado"):
                 raw_v = str(item.get("valor_raw") or "")
                 cant, hrs, conf = self._parse_fraction_or_number(raw_v)
-                c_final = cant if cant is not None else (item.get("cantidad") or 1.0)
+                c_reclamada = cant if cant is not None else (item.get("cantidad") or 1.0)
                 
                 if cod == "MAN_HOUR" and "/" in raw_v:
-                    # En Man-Hour, "4/1" usualmente significa 4 hombres x 1 hora o 4 horas
+                    # En Man-Hour, "4/2" usualmente significa 4 hombres x 2 horas = 8 H/H
                     parts = raw_v.split("/")
                     try:
-                        c_final = float(parts[0]) * float(parts[1])
+                        c_reclamada = float(parts[0]) * float(parts[1])
                     except:
-                        c_final = 4.0
-                
+                        c_reclamada = 4.0
+                elif cod != "MAN_HOUR" and "/" in raw_v:
+                    parts = raw_v.split("/")
+                    try:
+                        p1 = float(parts[0].strip())
+                        p2 = float(parts[1].strip())
+                        c_reclamada = p2 if p1 == 1.0 and p2 > 1.0 else (p1 * p2 if p2 > 0 else 1.0)
+                    except:
+                        pass
+
+                tot_reclamado = round(c_reclamada * tarifa_std, 2)
+
+                # Generar Alertas siempre (según Cláusula 12 y 13)
+                if cod == "PUSHBACK":
+                    alertas.append({
+                        "tipo": "ADVERTENCIA",
+                        "codigo": "PUSHBACK_INCLUIDO_PAQUETE",
+                        "descripcion": "Push-Tractor / Remolcador marcado en papel ($150.00). Según Cláusula 12 y 13, 1 maniobra de pushback está incluida en el paquete de rampa.",
+                        "clausula": "Cláusula 12 y 13",
+                        "monto": 150.00
+                    })
+                elif cod in ["MAN_HOUR", "TRACTOR_TRUCK", "BAGGAGE_CART", "CARGOVEYOR"] and not excede_turnaround:
+                    alertas.append({
+                        "tipo": "ADVERTENCIA",
+                        "codigo": f"{cod}_DENTRO_DE_TURNAROUND",
+                        "descripcion": f"{nombre_std} marcado en orden física (${tot_reclamado:.2f}) dentro de turnaround regular ({tiempo_en_tierra_min} min <= {tiempo_incluido} min). Cubierto por paquete estándar.",
+                        "clausula": "Cláusula 12 y 13",
+                        "monto": tot_reclamado
+                    })
+
+                # Cálculo de cantidad auditada
+                if item.get("cantidad_auditada") is not None:
+                    c_final = float(item["cantidad_auditada"])
+                elif aplicar_clausula_12_estricta:
+                    if cod == "PUSHBACK":
+                        c_final = 0.0
+                    elif cod in ["MAN_HOUR", "TRACTOR_TRUCK", "BAGGAGE_CART", "CARGOVEYOR"]:
+                        if not excede_turnaround:
+                            c_final = 0.0
+                        else:
+                            # Si excede turnaround, descuenta la primera hora cubierta por el paquete
+                            if cod == "MAN_HOUR":
+                                c_final = max(0.0, c_reclamada - 4.0)
+                            else:
+                                c_final = max(0.0, c_reclamada - 1.0)
+                    else:
+                        c_final = c_reclamada
+                else:
+                    c_final = c_reclamada
+
                 tot = round(c_final * tarifa_std, 2)
+                ahorro_linea = max(0.0, round(tot_reclamado - tot, 2))
+
                 lineas_costo.append({
                     "codigo": cod,
-                    "descripcion": f"{nombre_std} (x{c_final})",
+                    "descripcion": f"{nombre_std} (x{c_final})" if c_final > 0 else f"{nombre_std} (Auditado $0 - Cláusula 12)",
                     "cantidad": c_final,
                     "unidad": unidad_std,
                     "precio_unitario": tarifa_std,
                     "total": tot,
-                    "regla": f"Tabla 6: USD {tarifa_std} por {unidad_std}",
+                    "cantidad_reclamada_aviam": c_reclamada,
+                    "total_reclamado_aviam": tot_reclamado,
+                    "ahorro_usd": ahorro_linea,
+                    "regla": f"Tabla 6: USD {tarifa_std} por {unidad_std}" + (" (Cláusula 12 estricta)" if aplicar_clausula_12_estricta and c_final < c_reclamada else ""),
                     "es_adicional": True
                 })
 
@@ -504,6 +645,9 @@ class RuleEngine:
                 "unidad": "recargo %",
                 "precio_unitario": monto_noc,
                 "total": monto_noc,
+                "cantidad_reclamada_aviam": 1.0,
+                "total_reclamado_aviam": monto_noc,
+                "ahorro_usd": 0.0,
                 "regla": "Tarifario 2025 Nota 8: +15% sobre paquete básico",
                 "es_adicional": True
             })
@@ -519,6 +663,9 @@ class RuleEngine:
                 "unidad": "recargo %",
                 "precio_unitario": monto_dom,
                 "total": monto_dom,
+                "cantidad_reclamada_aviam": 1.0,
+                "total_reclamado_aviam": monto_dom,
+                "ahorro_usd": 0.0,
                 "regla": "Tarifario 2025 Nota 9: +15% sobre paquete básico",
                 "es_adicional": True
             })
@@ -545,6 +692,8 @@ class RuleEngine:
         # 10. Totales y Estado Semafórico
         costo_adicionales = sum(l["total"] for l in lineas_costo if l["es_adicional"])
         costo_total_esperado = round(costo_base + costo_adicionales, 2)
+        costo_reclamado_aviam = round(sum(l.get("total_reclamado_aviam", l["total"]) for l in lineas_costo), 2)
+        ahorro_auditoria_usd = max(0.0, round(costo_reclamado_aviam - costo_total_esperado, 2))
 
         # Determinar estado
         # 🟢 CONFORME, 🟠 CON ADICIONALES, 🔴 INCONSISTENTE, ⚪ REVISAR
@@ -587,6 +736,9 @@ class RuleEngine:
             "costo_base": costo_base,
             "costo_adicionales": round(costo_adicionales, 2),
             "costo_total_esperado": costo_total_esperado,
+            "costo_reclamado_aviam": costo_reclamado_aviam,
+            "ahorro_auditoria_usd": ahorro_auditoria_usd,
+            "aplicar_clausula_12_estricta": aplicar_clausula_12_estricta,
             "lineas_costo": lineas_costo,
             "alertas": alertas,
             "estado": estado

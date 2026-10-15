@@ -13,7 +13,9 @@ from typing import Dict, Any, Optional, List
 # Asegurar path para imports locales
 sys.path.insert(0, os.path.dirname(__file__))
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
+import io
+import csv
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -138,6 +140,92 @@ def update_order(numero_orden: str, payload: Dict[str, Any]):
 def validate_order(numero_orden: str):
     mark_order_validated(numero_orden, True)
     return {"status": "validated", "numero_orden": numero_orden}
+
+@app.post("/api/orders/{numero_orden}/audit-clause-12")
+def audit_clause_12(numero_orden: str, strict: bool = Query(True)):
+    order = get_order_by_number(numero_orden)
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    payload = order.get("data", {})
+    payload["aplicar_clausula_12_estricta"] = strict
+    calc = engine.calcular_orden(payload)
+    img_path = order.get("imagen_path", "")
+    hub = payload.get("hub") or order.get("hub", "PUJ")
+    save_or_update_order(payload, calc, json.dumps(payload), img_path, hub=hub)
+    return {
+        "status": "audited",
+        "numero_orden": numero_orden,
+        "aplicar_clausula_12_estricta": strict,
+        "calculation": calc,
+        "data": payload
+    }
+
+@app.post("/api/orders/manual")
+def create_manual_order(payload: Dict[str, Any]):
+    num_orden = payload.get("numero_orden")
+    if not num_orden:
+        raise HTTPException(status_code=400, detail="El número de orden es obligatorio")
+    
+    # Asegurar campos base
+    if not payload.get("aerolinea"):
+        payload["aerolinea"] = "ARAJET"
+    if not payload.get("tipo_aeronave"):
+        payload["tipo_aeronave"] = "B737 MAX 8"
+    if not payload.get("hub"):
+        payload["hub"] = "PUJ"
+        
+    calc = engine.calcular_orden(payload)
+    hub = payload.get("hub", "PUJ")
+    save_or_update_order(payload, calc, json.dumps(payload), imagen_path="", hub=hub)
+    return {
+        "status": "created",
+        "numero_orden": num_orden,
+        "calculation": calc,
+        "data": payload
+    }
+
+@app.get("/api/export/csv")
+def export_csv(fecha: str = Query(...), hub: Optional[str] = Query(None)):
+    orders = get_orders_by_date(fecha, hub)
+    output = io.StringIO()
+    writer = csv.writer(output, quoting=csv.QUOTE_MINIMAL)
+    
+    # Columnas: Fecha, Hub, Numero_Orden, Matricula, Vuelo_In, Origen, Vuelo_Out, Destino, Llegada, Salida, Tiempo_Tierra_Min, Reclamado_AVIAM_USD, Conciliado_Arajet_USD, Ahorro_USD, Estado, Validada
+    writer.writerow([
+        "Fecha", "Hub", "Numero_Orden", "Matricula", "Vuelo_In", "Origen",
+        "Vuelo_Out", "Destino", "Llegada", "Salida", "Tiempo_Tierra_Min",
+        "Reclamado_AVIAM_USD", "Conciliado_Arajet_USD", "Ahorro_USD", "Estado", "Validada"
+    ])
+    
+    for o in orders:
+        data = o.get("data", {})
+        calc = o.get("calculation", {})
+        writer.writerow([
+            o.get("fecha_agrupacion", fecha),
+            o.get("hub", hub or "PUJ"),
+            o.get("numero_orden", ""),
+            o.get("matricula", ""),
+            o.get("vuelo_entrante", data.get("vuelo_entrante", "")),
+            data.get("origen", ""),
+            o.get("vuelo_saliente", data.get("vuelo_saliente", "")),
+            data.get("destino", ""),
+            o.get("llegada", ""),
+            o.get("salida", ""),
+            o.get("tiempo_en_tierra_min", 0),
+            calc.get("costo_reclamado_aviam", o.get("costo_total_esperado", 0.0)),
+            o.get("costo_total_esperado", 0.0),
+            calc.get("ahorro_auditoria_usd", 0.0),
+            o.get("estado", ""),
+            "SI" if o.get("validada") else "NO"
+        ])
+    
+    csv_bytes = output.getvalue().encode("utf-8-sig")
+    filename = f"Sabana_Conciliacion_{hub.upper() if hub else 'ALL'}_{fecha}.csv"
+    return Response(
+        content=csv_bytes,
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
 
 @app.get("/api/orders/{numero_orden}/image")
 def get_order_image(numero_orden: str):

@@ -2,9 +2,10 @@ import { useState, useEffect } from 'react';
 import {
   Plane, UploadCloud, Calendar, Search, AlertTriangle,
   CheckCircle2, Clock, DollarSign, FileText, Settings, ShieldCheck,
-  ZoomIn, ZoomOut, RotateCcw, AlertOctagon,
-  TrendingUp, Download, Eye, X, Sparkles, MapPin, Trash2,
-  Volume2, Wind, ListFilter, LayoutGrid, Compass
+  ZoomIn, ZoomOut, RotateCcw,
+  TrendingUp, Download, Eye, X, Trash2,
+  Volume2, Wind, PlusCircle, ChevronLeft, ChevronRight,
+  Shield, Check
 } from 'lucide-react';
 import { RampLoadingScreen } from './components/RampLoadingScreen';
 import { HubSelector, HUBS_DATA } from './components/HubSelector';
@@ -44,27 +45,6 @@ function playAirportChime() {
   }
 }
 
-function SplitFlapText({
-  text,
-  className = '',
-  color = 'amber'
-}: {
-  text: string;
-  className?: string;
-  color?: 'amber' | 'white' | 'cyan';
-}) {
-  if (!text) return null;
-  return (
-    <span className={`split-flap-word ${className}`}>
-      {text.split('').map((char, i) => (
-        <span key={i} className={`split-flap-tile ${color}`}>
-          {char}
-        </span>
-      ))}
-    </span>
-  );
-}
-
 interface CostLine {
   codigo: string;
   descripcion: string;
@@ -72,6 +52,9 @@ interface CostLine {
   unidad: string;
   precio_unitario: number;
   total: number;
+  cantidad_reclamada_aviam?: number;
+  total_reclamado_aviam?: number;
+  ahorro_usd?: number;
   regla: string;
   es_adicional: boolean;
 }
@@ -82,6 +65,7 @@ interface AlertItem {
   descripcion: string;
   clausula: string;
   monto: number;
+  bloqueante?: boolean;
 }
 
 interface OrderCalculation {
@@ -100,6 +84,9 @@ interface OrderCalculation {
   costo_base: number;
   costo_adicionales: number;
   costo_total_esperado: number;
+  costo_reclamado_aviam?: number;
+  ahorro_auditoria_usd?: number;
+  aplicar_clausula_12_estricta?: boolean;
   lineas_costo: CostLine[];
   alertas: AlertItem[];
   estado: 'CONFORME' | 'CON_ADICIONALES' | 'INCONSISTENTE' | 'REVISAR';
@@ -136,29 +123,59 @@ export function App() {
   const [activeTab, setActiveTab] = useState<'diario' | 'subir' | 'kpi' | 'ajustes'>('diario');
   const [currentHub, setCurrentHub] = useState<'PUJ' | 'SDQ'>('PUJ');
   const [hubSummary, setHubSummary] = useState<any>(null);
-  const [viewMode, setViewMode] = useState<'fids' | 'stands'>('fids');
   const [currentTime, setCurrentTime] = useState<Date>(new Date());
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
-  
-  // No mostrar datos en pantalla de inicio hasta que el usuario seleccione una fecha
+
+  // Fechas y Órdenes
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [availableDates, setAvailableDates] = useState<any[]>([]);
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [filteredOrders, setFilteredOrders] = useState<OrderRecord[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('TODOS');
-  
-  // Modal / Split-View
+
+  // Orden seleccionada para la estación de auditoría Split-Screen
   const [selectedOrder, setSelectedOrder] = useState<OrderRecord | null>(null);
   const [zoomLevel, setZoomLevel] = useState<number>(1);
   const [editedData, setEditedData] = useState<any>(null);
   const [savingOrder, setSavingOrder] = useState(false);
+  const [isAuditingClause12, setIsAuditingClause12] = useState(false);
 
-  // Ramp Loading Screen Modal (Real upload or simulated preview)
+  // Modal para Registro de Orden Manual
+  const [showManualModal, setShowManualModal] = useState(false);
+  const [manualForm, setManualForm] = useState<any>({
+    numero_orden: '',
+    matricula: 'HI1098',
+    posicion: 'A2',
+    vuelo_entrante: 'DM1020',
+    origen: 'MIA',
+    vuelo_saliente: 'DM1021',
+    destino: 'SDQ',
+    llegada: '',
+    salida: '',
+    tipo_aeronave: 'B737 MAX 8',
+    aerolinea: 'ARAJET',
+    servicios: [
+      { codigo: 'RAMP_PACKAGE', marcado: true },
+      { codigo: 'POTABLE_WATER', marcado: false },
+      { codigo: 'LAVATORY', marcado: false },
+      { codigo: 'CABIN_CLEANING', marcado: false, valor_raw: 'T1' },
+      { codigo: 'GPU', marcado: false, valor_raw: 'JB' },
+      { codigo: 'ACU', marcado: false, valor_raw: 'JB' },
+      { codigo: 'PUSHBACK', marcado: true, valor_raw: '1' },
+      { codigo: 'MAN_HOUR', marcado: false, valor_raw: '4/1' },
+      { codigo: 'TRACTOR_TRUCK', marcado: false, valor_raw: '1' },
+      { codigo: 'BAGGAGE_CART', marcado: false, valor_raw: '1' },
+      { codigo: 'CARGOVEYOR', marcado: false, valor_raw: '1' },
+      { codigo: 'COBUS', marcado: false, cantidad: 1 }
+    ]
+  });
+
+  // Ramp Loading Screen Modal
   const [showRampScreen, setShowRampScreen] = useState(false);
   const [rampProgress, setRampProgress] = useState(0);
   const [rampTitle, setRampTitle] = useState('Perséfone • Despacho de Turnaround');
@@ -190,21 +207,44 @@ export function App() {
   const fetchDatesAndOrders = async (targetHub = currentHub, targetDate = selectedDate) => {
     try {
       const resDates = await fetch(`/api/dates?hub=${targetHub}`);
+      let availableList: any[] = [];
       if (resDates.ok) {
-        const d = await resDates.json();
-        setAvailableDates(d);
+        availableList = await resDates.json();
+        setAvailableDates(availableList);
       }
-      
-      // Si hay una fecha seleccionada no vacía, buscar las órdenes
-      if (targetDate && targetDate.trim() !== '') {
-        const resOrders = await fetch(`/api/orders?fecha=${targetDate}&hub=${targetHub}`);
+
+      // Si no hay fecha seleccionada pero hay fechas disponibles, preseleccionar la más reciente
+      let activeD = targetDate;
+      if (!activeD && availableList.length > 0) {
+        activeD = availableList[0].fecha_agrupacion;
+        setSelectedDate(activeD);
+      }
+
+      if (activeD && activeD.trim() !== '') {
+        const resOrders = await fetch(`/api/orders?fecha=${activeD}&hub=${targetHub}`);
         if (resOrders.ok) {
-          const o = await resOrders.json();
-          setOrders(o);
+          const ordList: OrderRecord[] = await resOrders.json();
+          setOrders(ordList);
+          // Si no hay orden seleccionada o la seleccionada no está en la nueva lista, seleccionar la primera
+          if (ordList.length > 0) {
+            setSelectedOrder(prev => {
+              if (prev && ordList.some(o => o.numero_orden === prev.numero_orden)) {
+                const refreshed = ordList.find(o => o.numero_orden === prev.numero_orden)!;
+                setEditedData(JSON.parse(JSON.stringify(refreshed.data)));
+                return refreshed;
+              }
+              setEditedData(JSON.parse(JSON.stringify(ordList[0].data)));
+              return ordList[0];
+            });
+          } else {
+            setSelectedOrder(null);
+            setEditedData(null);
+          }
         }
       } else {
-        // Pantalla inicial limpia sin órdenes hasta seleccionar fecha
         setOrders([]);
+        setSelectedOrder(null);
+        setEditedData(null);
       }
     } catch (e) {
       console.error("Error fetching data:", e);
@@ -220,13 +260,11 @@ export function App() {
       });
       if (res.ok) {
         const result = await res.json();
-        setDeleteNotice(`Lote del ${fecha} eliminado exitosamente (${result.deleted_count} órdenes removidas). Ya puedes volver a cargar.`);
+        setDeleteNotice(`Lote del ${fecha} eliminado exitosamente (${result.deleted_count} órdenes removidas).`);
         setDateToDelete(null);
-        if (selectedDate === fecha) {
-          setSelectedDate('');
-        }
+        setSelectedDate('');
         await fetchHubSummary();
-        await fetchDatesAndOrders(currentHub, selectedDate === fecha ? '' : selectedDate);
+        await fetchDatesAndOrders(currentHub, '');
         setTimeout(() => setDeleteNotice(null), 6000);
       } else {
         alert('Error al intentar eliminar las órdenes de la fecha seleccionada.');
@@ -242,10 +280,15 @@ export function App() {
   useEffect(() => {
     fetchHubSummary();
     fetchDatesAndOrders(currentHub, selectedDate);
-  }, [currentHub, selectedDate]);
+  }, [currentHub]);
 
   useEffect(() => {
-    // Cargar KPI y tarifas al montar o cambiar HUB
+    if (selectedDate) {
+      fetchDatesAndOrders(currentHub, selectedDate);
+    }
+  }, [selectedDate]);
+
+  useEffect(() => {
     fetch(`/api/kpi?hub=${currentHub}`).then(r => r.json()).then(setKpiData).catch(console.error);
     fetch('/api/tariffs').then(r => r.json()).then(t => {
       setTariffsJsonText(JSON.stringify(t, null, 2));
@@ -257,7 +300,7 @@ export function App() {
     let res = [...orders];
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
-      res = res.filter(o => 
+      res = res.filter(o =>
         o.numero_orden.toLowerCase().includes(q) ||
         (o.matricula || '').toLowerCase().includes(q) ||
         (o.vuelo_entrante || '').toLowerCase().includes(q) ||
@@ -266,19 +309,23 @@ export function App() {
       );
     }
     if (statusFilter !== 'TODOS') {
-      res = res.filter(o => o.estado === statusFilter);
+      if (statusFilter === 'VALIDADAS') {
+        res = res.filter(o => o.validada);
+      } else {
+        res = res.filter(o => o.estado === statusFilter);
+      }
     }
     setFilteredOrders(res);
   }, [orders, searchQuery, statusFilter]);
 
-  // Selección de orden para ver detalle
-  const handleOpenDetail = (order: OrderRecord) => {
+  // Selección de orden para auditar
+  const handleSelectOrder = (order: OrderRecord) => {
     setSelectedOrder(order);
     setEditedData(JSON.parse(JSON.stringify(order.data)));
     setZoomLevel(1);
   };
 
-  // Recálculo en vivo al editar campos
+  // Recálculo en vivo al editar campos generales
   const handleFieldChange = async (field: string, val: any) => {
     if (!selectedOrder || !editedData) return;
     const updated = { ...editedData, [field]: val };
@@ -292,7 +339,6 @@ export function App() {
       });
       if (res.ok) {
         const respJson = await res.json();
-        // Actualizar en el estado local
         const updatedRecord: OrderRecord = {
           ...selectedOrder,
           data: updated,
@@ -312,6 +358,83 @@ export function App() {
     }
   };
 
+  // Editar cantidad auditada en vivo de una línea de servicio
+  const handleAuditQtyChange = async (lineCode: string, newQty: number) => {
+    if (!selectedOrder || !editedData) return;
+    const servs = [...(editedData.servicios || [])];
+    const idx = servs.findIndex((s: any) => s.codigo === lineCode);
+    if (idx >= 0) {
+      servs[idx] = { ...servs[idx], cantidad_auditada: newQty };
+    } else {
+      servs.push({ codigo: lineCode, marcado: true, cantidad_auditada: newQty });
+    }
+    const updated = { ...editedData, servicios: servs };
+    setEditedData(updated);
+
+    try {
+      const res = await fetch(`/api/orders/${selectedOrder.numero_orden}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updated)
+      });
+      if (res.ok) {
+        const respJson = await res.json();
+        const updatedRecord: OrderRecord = {
+          ...selectedOrder,
+          data: updated,
+          calculation: respJson.calculation,
+          estado: respJson.calculation.estado,
+          costo_base: respJson.calculation.costo_base,
+          costo_adicionales: respJson.calculation.costo_adicionales,
+          costo_total_esperado: respJson.calculation.costo_total_esperado,
+          tiempo_en_tierra_min: respJson.calculation.tiempo_en_tierra_min,
+          excede_turnaround: respJson.calculation.excede_turnaround
+        };
+        setSelectedOrder(updatedRecord);
+        setOrders(prev => prev.map(o => o.numero_orden === selectedOrder.numero_orden ? updatedRecord : o));
+      }
+    } catch (e) {
+      console.error("Error updating audit qty:", e);
+    }
+  };
+
+  // Botón Destacado: Aplicar Filtro Cláusula 12 (Descontar GSE/Pushback incluidos en Turnaround)
+  const handleToggleClause12 = async () => {
+    if (!selectedOrder) return;
+    setIsAuditingClause12(true);
+    const currentStrict = Boolean(selectedOrder.calculation?.aplicar_clausula_12_estricta);
+    const targetStrict = !currentStrict;
+
+    try {
+      const res = await fetch(`/api/orders/${selectedOrder.numero_orden}/audit-clause-12?strict=${targetStrict}`, {
+        method: 'POST'
+      });
+      if (res.ok) {
+        const respJson = await res.json();
+        const updatedRecord: OrderRecord = {
+          ...selectedOrder,
+          data: respJson.data,
+          calculation: respJson.calculation,
+          estado: respJson.calculation.estado,
+          costo_base: respJson.calculation.costo_base,
+          costo_adicionales: respJson.calculation.costo_adicionales,
+          costo_total_esperado: respJson.calculation.costo_total_esperado,
+          tiempo_en_tierra_min: respJson.calculation.tiempo_en_tierra_min,
+          excede_turnaround: respJson.calculation.excede_turnaround
+        };
+        setSelectedOrder(updatedRecord);
+        setEditedData(respJson.data);
+        setOrders(prev => prev.map(o => o.numero_orden === selectedOrder.numero_orden ? updatedRecord : o));
+      }
+    } catch (e) {
+      console.error("Error toggling Clause 12:", e);
+      alert("Error al aplicar auditoría de Cláusula 12.");
+    } finally {
+      setIsAuditingClause12(false);
+    }
+  };
+
+  // Validar y Cerrar Orden
   const handleValidateOrder = async () => {
     if (!selectedOrder) return;
     setSavingOrder(true);
@@ -326,7 +449,86 @@ export function App() {
     }
   };
 
-  // Subida de PDF con Pantalla de Carga de Rampa Progresiva
+  // Navegación de Fecha (< y >)
+  const handlePrevDate = () => {
+    if (!selectedDate) return;
+    const idx = availableDates.findIndex(ad => ad.fecha_agrupacion === selectedDate);
+    if (idx >= 0 && idx < availableDates.length - 1) {
+      setSelectedDate(availableDates[idx + 1].fecha_agrupacion);
+    } else {
+      const d = new Date(selectedDate);
+      d.setDate(d.getDate() - 1);
+      setSelectedDate(d.toISOString().substring(0, 10));
+    }
+  };
+
+  const handleNextDate = () => {
+    if (!selectedDate) return;
+    const idx = availableDates.findIndex(ad => ad.fecha_agrupacion === selectedDate);
+    if (idx > 0) {
+      setSelectedDate(availableDates[idx - 1].fecha_agrupacion);
+    } else {
+      const d = new Date(selectedDate);
+      d.setDate(d.getDate() + 1);
+      setSelectedDate(d.toISOString().substring(0, 10));
+    }
+  };
+
+  // Descargar CSV vía endpoint oficial
+  const handleDownloadCsv = () => {
+    if (!selectedDate) {
+      alert("Selecciona una fecha antes de exportar.");
+      return;
+    }
+    const url = `/api/export/csv?fecha=${selectedDate}&hub=${currentHub}`;
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", `Sabana_Conciliacion_${currentHub}_${selectedDate}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Guardar Orden Manual
+  const handleSaveManualOrder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!manualForm.numero_orden || !manualForm.llegada || !manualForm.salida) {
+      alert("Por favor completa el número de orden, hora de llegada y hora de salida.");
+      return;
+    }
+
+    try {
+      const payload = {
+        ...manualForm,
+        hub: currentHub,
+        fecha_agrupacion: manualForm.llegada.substring(0, 10) || selectedDate
+      };
+
+      const res = await fetch('/api/orders/manual', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (res.ok) {
+        const created = await res.json();
+        setShowManualModal(false);
+        const orderDate = payload.fecha_agrupacion;
+        setSelectedDate(orderDate);
+        await fetchHubSummary();
+        await fetchDatesAndOrders(currentHub, orderDate);
+        alert(`Orden #${created.numero_orden} registrada y auditada exitosamente.`);
+      } else {
+        const err = await res.json();
+        alert(`Error al registrar orden: ${err.detail || 'Error desconocido'}`);
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Error de conexión al registrar la orden manual.");
+    }
+  };
+
+  // Subida de PDF con Pantalla de Carga
   const handleFileUpload = async (file: File) => {
     if (!file || !file.name.endsWith('.pdf')) {
       alert("Por favor selecciona un archivo PDF válido.");
@@ -343,7 +545,6 @@ export function App() {
     formData.append('file', file);
     formData.append('hub', currentHub);
 
-    // Animación visual de progreso por fases
     const progInterval = setInterval(() => {
       setRampProgress((prev) => {
         if (prev < 35) {
@@ -373,7 +574,7 @@ export function App() {
         const uploadedDate = data.fecha_detectada || '';
         setRampProgress(100);
         setRampSubtitle(`¡Despacho completado! Se procesaron ${data.total_paginas} órdenes en HUB ${currentHub} para ${uploadedDate}.`);
-        
+
         setTimeout(() => {
           setShowRampScreen(false);
           setActiveTab('diario');
@@ -398,53 +599,11 @@ export function App() {
     }
   };
 
-  // Abrir simulador interactivo de pantalla de carga
-  const handleOpenSimulator = () => {
-    setRampIsSimulated(true);
-    setRampProgress(0);
-    setRampTitle(`Perséfone • Simulador de Turnaround de Rampa [${currentHub}]`);
-    setRampSubtitle("Demostración visual de acoplamiento progresivo de equipos de tierra");
-    setShowRampScreen(true);
-  };
-
-  // Totales del día
-  const totalEsperado = orders.reduce((acc, o) => acc + (o.costo_total_esperado || 0), 0);
-  const totalAdicionales = orders.reduce((acc, o) => acc + (o.costo_adicionales || 0), 0);
-  const countConforme = orders.filter(o => o.estado === 'CONFORME').length;
-  const countAdicionales = orders.filter(o => o.estado === 'CON_ADICIONALES').length;
-  const countInconsistente = orders.filter(o => o.estado === 'INCONSISTENTE').length;
-  const countRevisar = orders.filter(o => o.estado === 'REVISAR').length;
-
-  // Exportar a CSV
-  const handleExportCSV = () => {
-    if (!selectedDate) {
-      alert("Selecciona una fecha de operación antes de exportar.");
-      return;
-    }
-    const headers = ["HUB", "Numero_Orden", "Aerolinea", "Matricula", "Llegada", "Salida", "Turnaround_Min", "Excede_70m", "Costo_Base_USD", "Adicionales_USD", "Total_USD", "Estado"];
-    const rows = orders.map(o => [
-      o.hub || currentHub,
-      o.numero_orden,
-      o.aerolinea,
-      o.matricula,
-      o.llegada,
-      o.salida,
-      o.tiempo_en_tierra_min,
-      o.excede_turnaround ? "SI" : "NO",
-      o.costo_base,
-      o.costo_adicionales,
-      o.costo_total_esperado,
-      o.estado
-    ]);
-    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `Persefone_Reporte_${currentHub}_${selectedDate}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
+  // Totales y KPIs Financieros del Día
+  const totalReclamadoAviam = orders.reduce((acc, o) => acc + (o.calculation?.costo_reclamado_aviam || o.costo_total_esperado || 0), 0);
+  const totalConciliadoArajet = orders.reduce((acc, o) => acc + (o.costo_total_esperado || 0), 0);
+  const totalAhorroDia = Math.max(0, totalReclamadoAviam - totalConciliadoArajet);
+  const validadasCount = orders.filter(o => o.validada).length;
 
   return (
     <div className="app-container">
@@ -501,7 +660,7 @@ export function App() {
       {/* Encabezado Corporativo Perséfone */}
       <header className="app-header">
         <div className="header-top">
-          {/* Logo y Branding Perséfone */}
+          {/* Logo y Branding */}
           <div className="brand-persefone-crest">
             <div className="persefone-logo-icon">
               <Plane className="w-6 h-6 transform -rotate-45" />
@@ -514,49 +673,111 @@ export function App() {
                 </span>
               </h1>
               <p className="brand-persefone-sub">
-                Aviation Ground Handling & Billing Audit System • F-RAM-AVL-MAG 04
+                Aviation Ground Handling & Daily Billing Audit • Arajet S.A. vs AVIAM Ltd.
               </p>
             </div>
           </div>
 
-          {/* Selector de HUB Rápido y Acciones */}
-          <div className="header-actions-group">
-            {/* HUB Switcher Compacto */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <span style={{ fontSize: '0.75rem', color: '#94a3b8', fontWeight: 600 }}>
-                <MapPin className="w-3.5 h-3.5 text-sky-400 inline mr-0.5" /> HUB:
-              </span>
-              <HubSelector
-                currentHub={currentHub}
-                onHubChange={(hub) => {
-                  setCurrentHub(hub);
-                  setSelectedDate(''); // Reiniciar fecha al cambiar de estación
-                }}
-                hubSummary={hubSummary}
-                compact={true}
+          {/* Navegador de Fecha & Botones de Operación Diaria */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+            {/* Selector de Hub */}
+            <HubSelector
+              currentHub={currentHub}
+              onHubChange={(hub) => {
+                setCurrentHub(hub);
+                setSelectedDate('');
+              }}
+              hubSummary={hubSummary}
+              compact={true}
+            />
+
+            {/* Navegador de Fechas (<, Input, >) */}
+            <div className="date-navigator-wrap">
+              <button
+                type="button"
+                className="date-nav-arrow-btn"
+                onClick={handlePrevDate}
+                title="Día Anterior"
+              >
+                <ChevronLeft size={16} />
+              </button>
+              <input
+                type="date"
+                className="date-select-input"
+                style={{ background: 'transparent', border: 'none', color: '#f8fafc', fontWeight: 700, padding: '0 4px', fontSize: '0.85rem' }}
+                value={selectedDate}
+                onChange={(e) => setSelectedDate(e.target.value)}
               />
+              <button
+                type="button"
+                className="date-nav-arrow-btn"
+                onClick={handleNextDate}
+                title="Día Siguiente"
+              >
+                <ChevronRight size={16} />
+              </button>
             </div>
 
-            {/* Botón Simulador de Pantalla de Carga */}
+            {/* Botón Registrar Orden Manual */}
             <button
               type="button"
-              className="ramp-demo-trigger-btn"
-              onClick={handleOpenSimulator}
-              title="Abrir simulación de pantalla de carga con acoplamiento de equipos de rampa"
+              className="hdr-action-btn hdr-btn-manual"
+              onClick={() => {
+                setManualForm({
+                  ...manualForm,
+                  llegada: selectedDate ? `${selectedDate}T10:00` : '',
+                  salida: selectedDate ? `${selectedDate}T11:00` : ''
+                });
+                setShowManualModal(true);
+              }}
+              title="Registrar manualmente una orden suelta del día"
             >
-              <Sparkles className="w-4 h-4 text-amber-400 animate-spin-slow" />
-              <span>Simulador de Rampa (0-100%)</span>
+              <PlusCircle size={15} /> Orden Manual
             </button>
 
-            {/* Exportar Reporte */}
+            {/* Botón Subir PDF del Día */}
             <button
-              onClick={handleExportCSV}
-              className="inspect-btn"
-              style={{ background: '#ffffff', color: '#0f172a', fontWeight: 700 }}
-              title="Descargar liquidación del día en CSV"
+              type="button"
+              className="hdr-action-btn hdr-btn-upload"
+              onClick={() => setActiveTab('subir')}
+              title="Subir PDF escaneado con formularios F-RAM del día"
             >
-              <Download size={15} /> Exportar CSV
+              <UploadCloud size={15} /> Subir PDF
             </button>
+
+            {/* Botón Exportar Sábana CSV del Día */}
+            <button
+              type="button"
+              className="hdr-action-btn hdr-btn-csv"
+              onClick={handleDownloadCsv}
+              title="Descargar Sábana de Conciliación Diaria en CSV"
+            >
+              <Download size={15} /> Sábana CSV
+            </button>
+
+            {/* Botón Eliminar Lote de Fecha */}
+            {selectedDate && (
+              <button
+                type="button"
+                onClick={() => setDateToDelete(selectedDate)}
+                style={{
+                  background: 'rgba(239, 68, 68, 0.15)',
+                  border: '1px solid rgba(239, 68, 68, 0.4)',
+                  color: '#f87171',
+                  borderRadius: '7px',
+                  padding: '0.45rem 0.65rem',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  fontSize: '0.8rem',
+                  fontWeight: 600
+                }}
+                title={`Eliminar todas las órdenes del ${selectedDate}`}
+              >
+                <Trash2 size={14} />
+              </button>
+            )}
           </div>
         </div>
 
@@ -566,7 +787,7 @@ export function App() {
             className={`nav-tab-btn ${activeTab === 'diario' ? 'active' : ''}`}
             onClick={() => setActiveTab('diario')}
           >
-            <Calendar size={16} /> Operaciones en Rampa {selectedDate ? `(${orders.length})` : ''}
+            <Calendar size={16} /> Estación de Auditoría Diaria {selectedDate ? `(${orders.length})` : ''}
           </button>
           <button
             className={`nav-tab-btn ${activeTab === 'subir' ? 'active' : ''}`}
@@ -590,66 +811,51 @@ export function App() {
       </header>
 
       {/* Cuerpo Principal */}
-      <main className="main-content">
+      <main className="main-content" style={{ maxWidth: '1800px' }}>
         {/* PESTAÑA 1: VISTA DIARIA */}
         {activeTab === 'diario' && (
           <div>
-            {/* Banner de Estado del HUB Activo (Limpio, sin clima ni pista) */}
-            <div style={{
-              background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)',
-              border: '1px solid rgba(56, 189, 248, 0.2)',
-              borderRadius: '12px',
-              padding: '0.85rem 1.25rem',
-              marginBottom: '1.5rem',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              color: '#ffffff'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                <span style={{
-                  background: '#0284c7',
-                  color: '#ffffff',
-                  fontWeight: 800,
-                  fontSize: '0.85rem',
-                  padding: '0.3rem 0.6rem',
-                  borderRadius: '6px',
-                  fontFamily: 'JetBrains Mono, monospace'
-                }}>
-                  {currentHub} / {HUBS_DATA[currentHub].icao}
+            {/* Cinta de Historial de Días Cargados (Scrolleable con badges interactivos) */}
+            {availableDates.length > 0 && (
+              <div className="dates-history-strip">
+                <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap' }}>
+                  Historial de Días:
                 </span>
-                <div>
-                  <strong style={{ fontSize: '0.92rem' }}>{HUBS_DATA[currentHub].name}</strong>
-                  <span style={{ fontSize: '0.78rem', color: '#94a3b8', marginLeft: '0.5rem' }}>
-                    {HUBS_DATA[currentHub].city}
-                  </span>
-                </div>
+                {availableDates.map((ad, idx) => {
+                  const isCur = ad.fecha_agrupacion === selectedDate;
+                  return (
+                    <button
+                      key={idx}
+                      type="button"
+                      className={`history-date-chip ${isCur ? 'active' : ''}`}
+                      onClick={() => setSelectedDate(ad.fecha_agrupacion)}
+                      title={`Ver órdenes del ${ad.fecha_agrupacion}`}
+                    >
+                      <span className="history-chip-date">📅 {ad.fecha_agrupacion}</span>
+                      <span className="history-chip-badge">{ad.total_ordenes} vls</span>
+                      <span className="history-chip-usd">${ad.total_usd?.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
+                    </button>
+                  );
+                })}
               </div>
+            )}
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', fontSize: '0.8rem' }}>
-                <span className="status-pill conforme" style={{ fontSize: '0.7rem' }}>
-                  ● OPERACIONAL
-                </span>
-              </div>
-            </div>
-
-            {/* Banner de Notificación de Operaciones (p.ej. Eliminación de Lote) */}
+            {/* Banner de Notificación si se eliminó un lote */}
             {deleteNotice && (
-              <div className="persefone-toast-success" style={{
+              <div style={{
                 background: '#ecfdf5',
                 border: '1px solid #10b981',
                 color: '#065f46',
                 borderRadius: '8px',
-                padding: '0.85rem 1.25rem',
-                marginBottom: '1.25rem',
+                padding: '0.75rem 1.25rem',
+                marginBottom: '1rem',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '0.75rem',
-                fontSize: '0.88rem',
-                fontWeight: 600,
-                boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)'
+                fontSize: '0.85rem',
+                fontWeight: 600
               }}>
-                <CheckCircle2 size={18} className="text-emerald-600" />
+                <CheckCircle2 size={16} className="text-emerald-600" />
                 <span style={{ flex: 1 }}>{deleteNotice}</span>
                 <button
                   type="button"
@@ -661,610 +867,505 @@ export function App() {
               </div>
             )}
 
-            {/* CONDICIONAL: SI NO HAY FECHA SELECCIONADA, MOSTRAR PANTALLA DE SELECCIÓN INICIAL */}
-            {!selectedDate ? (
-              <div className="select-date-prompt-card">
-                <div className="prompt-icon-circle">
-                  <Calendar size={36} />
-                </div>
-                <h2>Selecciona una Fecha de Operación</h2>
-                <p>
-                  Para auditar las órdenes de servicio de <strong>HUB {currentHub}</strong>, elige una fecha disponible del listado o ingresa una fecha manualmente.
-                </p>
-
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.25rem', width: '100%', maxWidth: '680px' }}>
-                  {availableDates.length > 0 ? (
-                    <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                      <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                        Lotes Registrados en HUB {currentHub} ({availableDates.length}):
-                      </span>
-                      {availableDates.map((ad, idx) => (
-                        <div
-                          key={idx}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            padding: '0.85rem 1.2rem',
-                            background: '#0e182b',
-                            border: '1px solid rgba(56, 189, 248, 0.22)',
-                            borderRadius: '10px',
-                            boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
-                            transition: 'all 0.15s ease'
-                          }}
-                        >
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                            <div style={{
-                              background: 'rgba(2, 132, 199, 0.15)',
-                              color: '#38bdf8',
-                              border: '1px solid rgba(56, 189, 248, 0.3)',
-                              padding: '0.4rem 0.75rem',
-                              borderRadius: '6px',
-                              fontFamily: 'JetBrains Mono, monospace',
-                              fontWeight: 800,
-                              fontSize: '0.9rem'
-                            }}>
-                              📅 {ad.fecha_agrupacion}
-                            </div>
-                            <div style={{ display: 'flex', flexDirection: 'column', textAlign: 'left' }}>
-                              <span style={{ fontSize: '0.88rem', fontWeight: 700, color: '#f8fafc' }}>
-                                {ad.total_ordenes} turnarounds registrados
-                              </span>
-                              <span style={{ fontSize: '0.78rem', color: '#94a3b8' }}>
-                                Total liquidación esperada: <strong style={{ color: '#38bdf8' }}>${ad.total_usd?.toLocaleString('en-US', { minimumFractionDigits: 2 })} USD</strong>
-                              </span>
-                            </div>
-                          </div>
-
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                            <button
-                              type="button"
-                              onClick={() => setSelectedDate(ad.fecha_agrupacion)}
-                              className="inspect-btn"
-                              style={{ background: '#0284c7', color: '#ffffff', fontSize: '0.8rem', padding: '0.4rem 0.85rem' }}
-                            >
-                              Abrir Lote
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setDateToDelete(ad.fecha_agrupacion)}
-                              className="delete-date-btn"
-                              style={{
-                                background: '#fef2f2',
-                                border: '1px solid #fecaca',
-                                color: '#dc2626',
-                                borderRadius: '6px',
-                                padding: '0.4rem 0.65rem',
-                                fontSize: '0.8rem',
-                                cursor: 'pointer',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '4px',
-                                fontWeight: 600
-                              }}
-                              title={`Eliminar lote del ${ad.fecha_agrupacion} para volver a cargar`}
-                            >
-                              <Trash2 size={14} /> Eliminar
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="no-dates-notice">
-                      No hay órdenes registradas para {currentHub}. Puedes ir a la pestaña <strong>"Subir PDF de Lote"</strong> para cargar tu primer archivo.
-                    </div>
-                  )}
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', fontSize: '0.85rem', color: '#64748b', marginTop: '0.5rem' }}>
-                    <span>O seleccionar fecha en calendario:</span>
-                    <input
-                      type="date"
-                      className="date-select-input"
-                      value={selectedDate}
-                      onChange={(e) => setSelectedDate(e.target.value)}
-                    />
+            {/* DASHBOARD DE 4 KPIS FINANCIEROS DEL DÍA SELECCIONADO */}
+            <div className="kpi-summary-grid" style={{ marginBottom: '1.25rem' }}>
+              {/* KPI 1: Órdenes del Día */}
+              <div className="kpi-card">
+                <div className="kpi-icon-box kpi-icon-navy"><Plane size={22} /></div>
+                <div>
+                  <div className="kpi-info-label">Órdenes del Día ({currentHub})</div>
+                  <div className="kpi-info-val">{orders.length} turnarounds</div>
+                  <div className="kpi-info-sub" style={{ color: validadasCount === orders.length && orders.length > 0 ? '#10b981' : '#94a3b8' }}>
+                    <ShieldCheck size={12} style={{ display: 'inline', marginRight: '3px' }} />
+                    {validadasCount} de {orders.length} validadas
                   </div>
                 </div>
               </div>
-            ) : (
-              /* SI HAY FECHA SELECCIONADA: MOSTRAR DATOS, KPIS Y GRILLA DE ÓRDENES */
-              <>
-                {/* Barra Superior de KPI del Día */}
-                <div className="kpi-summary-grid">
-                  <div className="kpi-card">
-                    <div className="kpi-icon-box kpi-icon-navy"><Plane size={24} /></div>
-                    <div>
-                      <div className="kpi-info-label">Turnarounds en {currentHub}</div>
-                      <div className="kpi-info-val">{orders.length}</div>
-                      <div className="kpi-info-sub">{selectedDate}</div>
-                    </div>
+
+              {/* KPI 2: Total Reclamado en Papel (AVIAM) */}
+              <div className="kpi-card">
+                <div className="kpi-icon-box" style={{ background: 'rgba(239, 68, 68, 0.15)', color: '#ef4444' }}>
+                  <FileText size={22} />
+                </div>
+                <div>
+                  <div className="kpi-info-label">Reclamado en Papel (AVIAM)</div>
+                  <div className="kpi-info-val" style={{ color: '#f87171' }}>
+                    ${totalReclamadoAviam.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
-                  <div className="kpi-card">
-                    <div className="kpi-icon-box kpi-icon-green"><DollarSign size={24} /></div>
-                    <div>
-                      <div className="kpi-info-label">Costo Total Esperado</div>
-                      <div className="kpi-info-val">${totalEsperado.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
-                      <div className="kpi-info-sub">Base: ${(orders.length * 500).toLocaleString()} USD</div>
-                    </div>
+                  <div className="kpi-info-sub">Monto bruto pretendido sin concesiones</div>
+                </div>
+              </div>
+
+              {/* KPI 3: Total Conciliado (Arajet) */}
+              <div className="kpi-card">
+                <div className="kpi-icon-box kpi-icon-green"><DollarSign size={22} /></div>
+                <div>
+                  <div className="kpi-info-label">Conciliado (Arajet)</div>
+                  <div className="kpi-info-val" style={{ color: '#38bdf8' }}>
+                    ${totalConciliadoArajet.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
-                  <div className="kpi-card">
-                    <div className="kpi-icon-box kpi-icon-amber"><AlertTriangle size={24} /></div>
-                    <div>
-                      <div className="kpi-info-label">Cargos Adicionales</div>
-                      <div className="kpi-info-val">${totalAdicionales.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
-                      <div className="kpi-info-sub">{countAdicionales} órdenes con recargo</div>
-                    </div>
+                  <div className="kpi-info-sub">Monto contractual auditado con reglas</div>
+                </div>
+              </div>
+
+              {/* KPI 4: Ahorro Detectado en el Día */}
+              <div className="kpi-card">
+                <div className="kpi-icon-box" style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#10b981' }}>
+                  <TrendingUp size={22} />
+                </div>
+                <div>
+                  <div className="kpi-info-label">Ahorro Detectado Hoy</div>
+                  <div className="kpi-info-val" style={{ color: '#34d399' }}>
+                    +${totalAhorroDia.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
-                  <div className="kpi-card">
-                    <div className="kpi-icon-box kpi-icon-red"><AlertOctagon size={24} /></div>
-                    <div>
-                      <div className="kpi-info-label">Semáforo de Cumplimiento</div>
-                      <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem' }}>
-                        <span className="status-pill conforme" style={{ fontSize: '0.7rem' }}>🟢 {countConforme}</span>
-                        <span className="status-pill con_adicionales" style={{ fontSize: '0.7rem' }}>🟠 {countAdicionales}</span>
-                        <span className="status-pill inconsistente" style={{ fontSize: '0.7rem' }}>🔴 {countInconsistente}</span>
-                        <span className="status-pill revisar" style={{ fontSize: '0.7rem' }}>⚪ {countRevisar}</span>
-                      </div>
-                    </div>
+                  <div className="kpi-info-sub">
+                    <span style={{
+                      background: 'rgba(16, 185, 129, 0.2)',
+                      color: '#34d399',
+                      padding: '1px 5px',
+                      borderRadius: '3px',
+                      fontWeight: 700,
+                      marginRight: '4px'
+                    }}>
+                      {kpiData?.estado_kpi === 'CUMPLE' ? '✓ CONCESIÓN 3 ACTIVA' : 'EN RIESGO'}
+                    </span>
+                    Vol. 226 vls/m
                   </div>
                 </div>
+              </div>
+            </div>
 
-                {/* Barra de Filtros y Búsqueda */}
-                <div className="controls-bar">
-                  <div className="date-selector-group">
-                    <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-muted)' }}>Fecha:</span>
-                    {availableDates.length > 0 ? (
-                      <select
-                        className="filter-select"
-                        style={{ fontWeight: 700 }}
-                        value={selectedDate}
-                        onChange={(e) => setSelectedDate(e.target.value)}
-                      >
-                        {availableDates.map((ad, idx) => (
-                          <option key={idx} value={ad.fecha_agrupacion}>
-                            {ad.fecha_agrupacion} ({ad.total_ordenes} órdenes)
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <input
-                        type="date"
-                        className="date-select-input"
-                        value={selectedDate}
-                        onChange={(e) => setSelectedDate(e.target.value)}
-                      />
-                    )}
-
-                    <button
-                      type="button"
-                      onClick={() => setSelectedDate('')}
-                      style={{
-                        background: '#f1f5f9',
-                        border: '1px solid #cbd5e1',
-                        borderRadius: '6px',
-                        padding: '0.35rem 0.65rem',
-                        fontSize: '0.75rem',
-                        color: '#475569',
-                        cursor: 'pointer',
-                        fontWeight: 600
-                      }}
-                      title="Quitar fecha y volver al selector inicial"
-                    >
-                      Cambiar Fecha
-                    </button>
-
-                    {/* Botón para Eliminar Fecha / Lote Activo */}
-                    <button
-                      type="button"
-                      onClick={() => setDateToDelete(selectedDate)}
-                      className="delete-date-btn"
-                      style={{
-                        background: '#fef2f2',
-                        border: '1px solid #fecaca',
-                        borderRadius: '6px',
-                        padding: '0.35rem 0.65rem',
-                        fontSize: '0.75rem',
-                        color: '#b91c1c',
-                        cursor: 'pointer',
-                        fontWeight: 700,
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '4px'
-                      }}
-                      title={`Eliminar todas las órdenes cargadas para el ${selectedDate} para volver a subir`}
-                    >
-                      <Trash2 size={13} /> Eliminar Fecha
-                    </button>
+            {/* ESTACIÓN DE AUDITORÍA SPLIT-SCREEN (3 PANELES) */}
+            {orders.length === 0 ? (
+              <div className="select-date-prompt-card" style={{ marginTop: '2rem' }}>
+                <div className="prompt-icon-circle">
+                  <Calendar size={36} />
+                </div>
+                <h2>No hay órdenes registradas para {selectedDate || 'esta fecha'}</h2>
+                <p>
+                  Sube el archivo PDF escaneado del día o registra una hoja suelta con el botón <strong>"Orden Manual"</strong>.
+                </p>
+                <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem' }}>
+                  <button
+                    className="hdr-action-btn hdr-btn-upload"
+                    onClick={() => setActiveTab('subir')}
+                  >
+                    <UploadCloud size={16} /> Subir PDF de Rampa
+                  </button>
+                  <button
+                    className="hdr-action-btn hdr-btn-manual"
+                    onClick={() => setShowManualModal(true)}
+                  >
+                    <PlusCircle size={16} /> Registrar Orden Manual
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="audit-tri-panel-layout">
+                {/* =========================================
+                    PANEL 1 (IZQUIERDO): LISTA DE ÓRDENES
+                   ========================================= */}
+                <div className="tri-panel">
+                  <div className="tri-panel-header">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <Plane size={15} className="text-sky-400" />
+                      <span>Órdenes ({filteredOrders.length})</span>
+                    </div>
+                    <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>{selectedDate}</span>
                   </div>
 
-                  <div className="filters-group">
+                  {/* Filtro y Buscador */}
+                  <div style={{ padding: '0.65rem 0.85rem', borderBottom: '1px solid rgba(56, 189, 248, 0.15)', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                     <div style={{ position: 'relative' }}>
-                      <Search size={15} style={{ position: 'absolute', left: '10px', top: '10px', color: '#94a3b8' }} />
+                      <Search size={14} style={{ position: 'absolute', left: '8px', top: '9px', color: '#64748b' }} />
                       <input
                         type="text"
-                        placeholder="Buscar orden, matrícula, vuelo..."
+                        placeholder="Buscar # orden, matrícula..."
                         className="search-input"
-                        style={{ paddingLeft: '32px' }}
+                        style={{ paddingLeft: '28px', fontSize: '0.8rem', width: '100%' }}
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                       />
                     </div>
-
                     <select
                       className="filter-select"
+                      style={{ fontSize: '0.78rem', width: '100%', padding: '0.35rem' }}
                       value={statusFilter}
                       onChange={(e) => setStatusFilter(e.target.value)}
                     >
                       <option value="TODOS">Todos los Estados</option>
                       <option value="CONFORME">🟢 Solo Conformes</option>
-                      <option value="CON_ADICIONALES">🟠 Solo con Adicionales</option>
-                      <option value="INCONSISTENTE">🔴 Solo Inconsistentes</option>
-                      <option value="REVISAR">⚪ Solo a Revisar</option>
+                      <option value="CON_ADICIONALES">🟠 Con Adicionales</option>
+                      <option value="INCONSISTENTE">🔴 Inconsistentes</option>
+                      <option value="VALIDADAS">🛡️ Solo Validadas</option>
                     </select>
                   </div>
-                </div>
 
-                {/* Selector de Modo de Visualización (FIDS Split-Flap vs Bahías VDGS) */}
-                <div className="view-mode-bar">
-                  <div className="view-mode-toggle">
-                    <button
-                      type="button"
-                      className={`view-mode-btn ${viewMode === 'fids' ? 'active' : ''}`}
-                      onClick={() => setViewMode('fids')}
-                      title="Ver como Tablero Electromecánico Split-Flap de Salidas / Llegadas del Aeropuerto"
-                    >
-                      <ListFilter size={15} /> Tablero FIDS Split-Flap ({filteredOrders.length})
-                    </button>
-                    <button
-                      type="button"
-                      className={`view-mode-btn ${viewMode === 'stands' ? 'active' : ''}`}
-                      onClick={() => setViewMode('stands')}
-                      title="Ver como Bahías de Estacionamiento en Rampa (VDGS)"
-                    >
-                      <LayoutGrid size={15} /> Bahías de Rampa / Gates ({filteredOrders.length})
-                    </button>
-                  </div>
+                  {/* Lista de Tarjetas Scrolleables */}
+                  <div className="tri-panel-content">
+                    {filteredOrders.map((ord) => {
+                      const isSel = selectedOrder?.numero_orden === ord.numero_orden;
+                      const turnMin = ord.tiempo_en_tierra_min ?? 0;
+                      const hasExcess = ord.excede_turnaround;
+                      const claimed = ord.calculation?.costo_reclamado_aviam || ord.costo_total_esperado;
+                      const saving = ord.calculation?.ahorro_auditoria_usd || Math.max(0, claimed - ord.costo_total_esperado);
 
-                  <div style={{ fontSize: '0.8rem', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '0.5rem', fontFamily: 'JetBrains Mono, monospace' }}>
-                    <Compass className="w-3.5 h-3.5 text-sky-400" />
-                    <span>ESTACIÓN {currentHub} • TIEMPO CONTRATO: 70 MIN</span>
-                  </div>
-                </div>
-
-                {/* VISTA 1: TABLERO FIDS ELECTROMECÁNICO (SPLIT-FLAP FLIGHT DEPARTURES BOARD) */}
-                {viewMode === 'fids' && (
-                  <div className="fids-board-wrapper">
-                    <div className="fids-board-header">
-                      <div className="fids-board-title">
-                        <span className="radar-dot" />
-                        <span>TABLERO FIDS DE OPERACIONES • {currentHub} ({HUBS_DATA[currentHub].icao})</span>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', fontSize: '0.75rem', color: '#94a3b8', fontFamily: 'JetBrains Mono, monospace' }}>
-                        <span>FECHA: <strong style={{ color: '#f8fafc' }}>{selectedDate}</strong></span>
-                        <span>•</span>
-                        <span>TURNAROUNDS: <strong style={{ color: '#38bdf8' }}>{filteredOrders.length}</strong></span>
-                      </div>
-                    </div>
-
-                    <div className="fids-table-responsive">
-                      <table className="fids-table">
-                        <thead>
-                          <tr>
-                            <th>ORDEN</th>
-                            <th>VUELO</th>
-                            <th>AERONAVE / MATRÍCULA</th>
-                            <th>RUTA</th>
-                            <th>PUERTA</th>
-                            <th>HORARIO</th>
-                            <th>TIEMPO EN TIERRA</th>
-                            <th>EQUIPOS GSE</th>
-                            <th>LIQUIDACIÓN</th>
-                            <th>ESTADO</th>
-                            <th style={{ textAlign: 'right' }}>ACCIÓN</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {filteredOrders.length === 0 ? (
-                            <tr>
-                              <td colSpan={11} style={{ textAlign: 'center', padding: '3rem', color: '#94a3b8' }}>
-                                <Plane size={36} className="text-slate-500 mx-auto mb-2" />
-                                <div style={{ fontSize: '1rem', fontWeight: 700, color: '#f8fafc' }}>
-                                  No hay vuelos registrados para el tablero FIDS en {selectedDate}
-                                </div>
-                              </td>
-                            </tr>
-                          ) : (
-                            filteredOrders.map((order) => {
-                              const statusClass = order.estado.toLowerCase();
-                              const statusLabel = 
-                                order.estado === 'CONFORME' ? 'CONFORME' :
-                                order.estado === 'CON_ADICIONALES' ? 'SERVICIOS EXTRAS' :
-                                order.estado === 'INCONSISTENTE' ? 'INCONSISTENTE' : 'REVISAR';
-
-                              const arrivalTime = order.llegada ? order.llegada.split('T')[1] || order.llegada.slice(-5) : '--:--';
-                              const departureTime = order.salida ? order.salida.split('T')[1] || order.salida.slice(-5) : '--:--';
-                              const turnMin = order.tiempo_en_tierra_min ?? 0;
-                              const budgetNominal = Math.min(100, (turnMin / 70) * 100);
-                              const hasExcess = order.excede_turnaround;
-
-                              return (
-                                <tr
-                                  key={order.numero_orden}
-                                  className="fids-row"
-                                  onClick={() => handleOpenDetail(order)}
-                                >
-                                  {/* # Orden */}
-                                  <td style={{ fontFamily: 'JetBrains Mono, monospace', fontWeight: 700, color: '#38bdf8' }}>
-                                    #{order.numero_orden}
-                                  </td>
-
-                                  {/* Vuelo */}
-                                  <td>
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                      <SplitFlapText text={order.vuelo_entrante || 'INB'} color="amber" />
-                                      <span style={{ fontSize: '0.68rem', color: '#64748b' }}>➔ {order.vuelo_saliente || 'OUT'}</span>
-                                    </div>
-                                  </td>
-
-                                  {/* Aeronave */}
-                                  <td>
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                      <SplitFlapText text={order.matricula || 'N/A'} color="white" />
-                                      <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>{order.tipo_aeronave}</span>
-                                    </div>
-                                  </td>
-
-                                  {/* Ruta */}
-                                  <td>
-                                    <div className="airport-route-badge">
-                                      <span className="iata-tag">{order.data?.origen || currentHub}</span>
-                                      <span className="iata-arrow">➔</span>
-                                      <span className="iata-tag">{order.data?.destino || 'DEST'}</span>
-                                    </div>
-                                  </td>
-
-                                  {/* Gate */}
-                                  <td>
-                                    <span className="airport-gate-badge">
-                                      GATE {order.posicion || 'B29'}
-                                    </span>
-                                  </td>
-
-                                  {/* Horario */}
-                                  <td style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.8rem' }}>
-                                    <span style={{ color: '#f8fafc' }}>{arrivalTime}</span>
-                                    <span style={{ color: '#64748b', margin: '0 4px' }}>➔</span>
-                                    <span style={{ color: '#f8fafc' }}>{departureTime}</span>
-                                  </td>
-
-                                  {/* Tiempo en Tierra Gauge */}
-                                  <td>
-                                    <div className="turnaround-gauge-wrap">
-                                      <div className="turnaround-gauge-track">
-                                        <div
-                                          className={`turnaround-gauge-fill ${hasExcess ? 'danger' : turnMin > 55 ? 'warning' : ''}`}
-                                          style={{ width: `${hasExcess ? 100 : budgetNominal}%` }}
-                                        />
-                                      </div>
-                                      <div className="turnaround-gauge-labels">
-                                        <span style={{ color: '#f8fafc', fontWeight: 700 }}>{turnMin} min</span>
-                                        <span style={{ color: hasExcess ? '#f87171' : '#64748b' }}>
-                                          {hasExcess ? `+${order.calculation?.exceso_tiempo_min}m exc.` : 'max 70m'}
-                                        </span>
-                                      </div>
-                                    </div>
-                                  </td>
-
-                                  {/* Equipos GSE */}
-                                  <td>
-                                    <div className="gse-icons-group">
-                                      {order.calculation?.lineas_costo.map((line, idx) => (
-                                        <span
-                                          key={idx}
-                                          className={`gse-badge-pill ${line.es_adicional ? 'charged' : 'standard'}`}
-                                          title={`${line.descripcion} - ${line.regla}`}
-                                        >
-                                          {line.codigo.includes('GPU') ? '⚡ GPU' :
-                                           line.codigo.includes('WATER') ? '💧 AGUA' :
-                                           line.codigo.includes('LAVATORY') ? '🚽 BAÑO' :
-                                           line.codigo.includes('PUSHBACK') ? '🚜 TUG' :
-                                           line.codigo.includes('COBUS') ? '🚌 BUS' : line.codigo}
-                                        </span>
-                                      ))}
-                                    </div>
-                                  </td>
-
-                                  {/* Total Liquidación */}
-                                  <td>
-                                    <div style={{ display: 'flex', flexDirection: 'column' }}>
-                                      <span style={{ fontFamily: 'JetBrains Mono, monospace', fontWeight: 800, color: '#38bdf8', fontSize: '0.95rem' }}>
-                                        ${order.costo_total_esperado?.toFixed(2)} USD
-                                      </span>
-                                      <span style={{ fontSize: '0.7rem', color: '#64748b' }}>
-                                        Base ${order.costo_base} + Extra ${order.costo_adicionales}
-                                      </span>
-                                    </div>
-                                  </td>
-
-                                  {/* Estado */}
-                                  <td>
-                                    <span className={`fids-status-badge ${statusClass}`}>
-                                      ● {statusLabel}
-                                    </span>
-                                  </td>
-
-                                  {/* Acción */}
-                                  <td style={{ textAlign: 'right' }}>
-                                    <button
-                                      type="button"
-                                      className="inspect-btn"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleOpenDetail(order);
-                                      }}
-                                    >
-                                      <Eye size={13} /> Auditar
-                                    </button>
-                                  </td>
-                                </tr>
-                              );
-                            })
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
-
-                {/* VISTA 2: BAHÍAS DE ESTACIONAMIENTO EN RAMPA (VDGS APPRON STANDS) */}
-                {viewMode === 'stands' && (
-                  <div className="orders-grid">
-                    {filteredOrders.length === 0 ? (
-                      <div style={{
-                        gridColumn: '1 / -1',
-                        textAlign: 'center',
-                        padding: '3rem',
-                        background: '#ffffff',
-                        borderRadius: '14px',
-                        border: '1px dashed #cbd5e1'
-                      }}>
-                        <Plane size={36} className="text-slate-400 mx-auto mb-2" />
-                        <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#0f172a' }}>
-                          No hay órdenes registradas para HUB {currentHub} en la fecha {selectedDate}
-                        </h3>
-                        <p style={{ color: '#64748b', fontSize: '0.85rem', marginTop: '0.5rem' }}>
-                          Verifica el filtro o carga las facturas en la pestaña "Subir PDF de Lote".
-                        </p>
-                      </div>
-                    ) : (
-                      filteredOrders.map((order) => {
-                        const statusClass = order.estado.toLowerCase();
-                        const statusLabel = 
-                          order.estado === 'CONFORME' ? '🟢 Conforme' :
-                          order.estado === 'CON_ADICIONALES' ? '🟠 Con Adicionales' :
-                          order.estado === 'INCONSISTENTE' ? '🔴 Inconsistente' : '⚪ Revisar';
-
-                        const arrivalTime = order.llegada ? order.llegada.split('T')[1] || order.llegada.slice(-5) : '--:--';
-                        const departureTime = order.salida ? order.salida.split('T')[1] || order.salida.slice(-5) : '--:--';
-                        const turnMin = order.tiempo_en_tierra_min ?? 0;
-                        const budgetNominal = Math.min(100, (turnMin / 70) * 100);
-                        const hasExcess = order.excede_turnaround;
-
-                        return (
-                          <div
-                            key={order.numero_orden}
-                            className={`stand-guidance-card ${statusClass}`}
-                            onClick={() => handleOpenDetail(order)}
-                          >
-                            <div>
-                              {/* Cabecera de Bahía y Puerta */}
-                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                  <span className="airport-gate-badge">
-                                    GATE {order.posicion || 'B29'}
-                                  </span>
-                                  <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.75rem', color: '#94a3b8' }}>
-                                    #{order.numero_orden}
-                                  </span>
-                                  {order.validada && (
-                                    <span style={{ fontSize: '0.7rem', color: '#10b981', display: 'flex', alignItems: 'center', gap: '2px', fontWeight: 600 }}>
-                                      <CheckCircle2 size={12} /> Validada
-                                    </span>
-                                  )}
-                                </div>
-                                <span className={`fids-status-badge ${statusClass}`} style={{ fontSize: '0.68rem', padding: '0.15rem 0.45rem' }}>
-                                  {statusLabel}
+                      return (
+                        <div
+                          key={ord.numero_orden}
+                          className={`audit-list-item ${isSel ? 'selected' : ''}`}
+                          onClick={() => handleSelectOrder(ord)}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                            <span style={{ fontFamily: 'JetBrains Mono, monospace', fontWeight: 800, color: '#38bdf8', fontSize: '0.9rem' }}>
+                              #{ord.numero_orden}
+                            </span>
+                            <div style={{ display: 'flex', gap: '4px' }}>
+                              {ord.validada && (
+                                <span style={{ background: '#059669', color: '#fff', fontSize: '0.65rem', padding: '1px 5px', borderRadius: '4px', fontWeight: 700 }}>
+                                  ✓ VALIDADA
                                 </span>
-                              </div>
-
-                              {/* Rutas y Split-Flap de Vuelo */}
-                              <div style={{ background: '#070e1b', border: '1px solid #1e293b', borderRadius: '8px', padding: '0.75rem', marginBottom: '0.75rem' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
-                                  <SplitFlapText text={order.vuelo_entrante || 'INB'} color="amber" />
-                                  <span style={{ color: '#38bdf8', fontSize: '0.8rem' }}>✈</span>
-                                  <SplitFlapText text={order.vuelo_saliente || 'OUT'} color="amber" />
-                                </div>
-
-                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.75rem', color: '#94a3b8' }}>
-                                  <span>{order.aerolinea} • {order.tipo_aeronave}</span>
-                                  <SplitFlapText text={order.matricula || 'N/A'} color="white" />
-                                </div>
-                              </div>
-
-                              {/* Tiempos en Tierra y Turnaround Gauge */}
-                              <div style={{ background: '#0f172a', borderRadius: '8px', padding: '0.65rem 0.75rem', marginBottom: '0.75rem' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.8rem', marginBottom: '0.35rem' }}>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: '#94a3b8' }}>
-                                    <Clock size={13} className="text-sky-400" />
-                                    <span style={{ fontFamily: 'JetBrains Mono, monospace', color: '#f8fafc' }}>
-                                      {arrivalTime} ➔ {departureTime}
-                                    </span>
-                                  </div>
-                                  <span style={{ fontFamily: 'JetBrains Mono, monospace', fontWeight: 800, color: hasExcess ? '#f87171' : '#10b981' }}>
-                                    {turnMin} min {hasExcess ? `(+${order.calculation?.exceso_tiempo_min}m)` : ''}
-                                  </span>
-                                </div>
-
-                                <div className="turnaround-gauge-track" style={{ height: '5px' }}>
-                                  <div
-                                    className={`turnaround-gauge-fill ${hasExcess ? 'danger' : turnMin > 55 ? 'warning' : ''}`}
-                                    style={{ width: `${hasExcess ? 100 : budgetNominal}%` }}
-                                  />
-                                </div>
-                              </div>
-
-                              {/* Chips de Servicios */}
-                              <div className="gse-icons-group" style={{ marginBottom: '0.5rem' }}>
-                                {order.calculation?.lineas_costo.map((line, idx) => (
-                                  <span
-                                    key={idx}
-                                    className={`gse-badge-pill ${line.es_adicional ? 'charged' : 'standard'}`}
-                                    title={line.regla}
-                                  >
-                                    {line.codigo} {line.total > 0 ? `($${line.total})` : ''}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-
-                            {/* Pie de Tarjeta con Costos */}
-                            <div style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'space-between',
-                              borderTop: '1px solid #1e293b',
-                              paddingTop: '0.65rem',
-                              marginTop: 'auto'
-                            }}>
-                              <div>
-                                <div style={{ fontSize: '0.72rem', color: '#94a3b8' }}>
-                                  Base ${order.costo_base} + Extra ${order.costo_adicionales}
-                                </div>
-                                <div style={{ fontFamily: 'JetBrains Mono, monospace', fontWeight: 800, color: '#38bdf8', fontSize: '1rem' }}>
-                                  ${order.costo_total_esperado?.toFixed(2)} USD
-                                </div>
-                              </div>
-
-                              <button className="inspect-btn">
-                                <Eye size={13} /> Auditar
-                              </button>
+                              )}
+                              <span className={`status-pill ${ord.estado.toLowerCase()}`} style={{ fontSize: '0.65rem', padding: '1px 5px' }}>
+                                {ord.estado === 'CONFORME' ? 'CONFORME' : ord.estado === 'CON_ADICIONALES' ? 'ADICIONALES' : ord.estado}
+                              </span>
                             </div>
                           </div>
-                        );
-                      })
+
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: '#94a3b8', marginBottom: '4px' }}>
+                            <span>✈️ <strong>{ord.matricula}</strong> • Gate {ord.posicion || 'Rampa'}</span>
+                            <span style={{ color: hasExcess ? '#f87171' : '#94a3b8', fontWeight: hasExcess ? 700 : 400 }}>
+                              ⏱️ {turnMin} min {hasExcess ? `(+${ord.calculation?.exceso_tiempo_min}m)` : ''}
+                            </span>
+                          </div>
+
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px', paddingTop: '4px', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                            <div style={{ fontSize: '0.72rem' }}>
+                              <span style={{ color: '#64748b' }}>Papel: </span>
+                              <span className="reclamado-tag-aviam">${claimed.toFixed(2)}</span>
+                            </div>
+                            <div style={{ fontSize: '0.72rem' }}>
+                              <span style={{ color: '#64748b' }}>Audit: </span>
+                              <span className="conciliado-tag-arajet">${ord.costo_total_esperado.toFixed(2)}</span>
+                            </div>
+                            {saving > 0 && (
+                              <span className="ahorro-tag-green">-${saving.toFixed(2)}</span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* =========================================
+                    PANEL 2 (CENTRAL): VISOR DE ESCANEO 200 DPI
+                   ========================================= */}
+                <div className="tri-panel">
+                  <div className="tri-panel-header">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <Eye size={15} className="text-sky-400" />
+                      <span>Visor Escaneo 200 DPI (F-RAM Original)</span>
+                      {selectedOrder && (
+                        <span style={{ color: '#38bdf8', fontFamily: 'JetBrains Mono, monospace' }}>
+                          • #{selectedOrder.numero_orden} (Pág. {selectedOrder.pagina})
+                        </span>
+                      )}
+                    </div>
+                    {/* Controles de Zoom */}
+                    <div style={{ display: 'flex', gap: '0.35rem' }}>
+                      <button
+                        type="button"
+                        className="image-tool-btn"
+                        onClick={() => setZoomLevel(prev => Math.min(prev + 0.25, 3))}
+                        title="Acercar imagen"
+                      >
+                        <ZoomIn size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        className="image-tool-btn"
+                        onClick={() => setZoomLevel(prev => Math.max(prev - 0.25, 0.5))}
+                        title="Alejar imagen"
+                      >
+                        <ZoomOut size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        className="image-tool-btn"
+                        onClick={() => setZoomLevel(1)}
+                        title="Restablecer tamaño normal"
+                      >
+                        <RotateCcw size={13} /> 100%
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="tri-panel-content" style={{ padding: 0, background: '#070d18', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'auto' }}>
+                    {selectedOrder ? (
+                      selectedOrder.imagen_path ? (
+                        <div style={{ width: '100%', height: '100%', overflow: 'auto', display: 'flex', justifyContent: 'center', padding: '1rem' }}>
+                          <img
+                            src={`/api/orders/${selectedOrder.numero_orden}/image`}
+                            alt={`Orden ${selectedOrder.numero_orden}`}
+                            style={{
+                              transform: `scale(${zoomLevel})`,
+                              transformOrigin: 'top center',
+                              transition: 'transform 0.15s ease',
+                              maxWidth: '100%',
+                              borderRadius: '6px',
+                              boxShadow: '0 8px 30px rgba(0,0,0,0.6)'
+                            }}
+                          />
+                        </div>
+                      ) : (
+                        <div style={{ textAlign: 'center', padding: '3rem', color: '#94a3b8' }}>
+                          <FileText size={48} className="text-sky-500 mx-auto mb-3" />
+                          <h4 style={{ color: '#f8fafc', fontSize: '1.1rem', fontWeight: 700 }}>
+                            Orden Registrada Manualmente
+                          </h4>
+                          <p style={{ fontSize: '0.82rem', color: '#64748b', maxWidth: '340px', margin: '0.5rem auto' }}>
+                            Esta orden fue digitada como hoja suelta y no proviene de un archivo rasterizado a 200 DPI.
+                          </p>
+                        </div>
+                      )
+                    ) : (
+                      <div style={{ color: '#64748b', fontSize: '0.9rem' }}>
+                        Selecciona una orden en el panel izquierdo para visualizar su escaneo
+                      </div>
                     )}
                   </div>
-                )}
-              </>
+                </div>
+
+                {/* =========================================
+                    PANEL 3 (DERECHO): CONCILIADOR INTERACTIVO
+                   ========================================= */}
+                <div className="tri-panel">
+                  {selectedOrder ? (
+                    <>
+                      <div className="tri-panel-header">
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <Shield size={16} className="text-emerald-400" />
+                          <span>Conciliador Contractual</span>
+                        </div>
+                        <button
+                          type="button"
+                          className="btn-success"
+                          style={{ padding: '0.35rem 0.75rem', fontSize: '0.78rem' }}
+                          onClick={handleValidateOrder}
+                          disabled={savingOrder || selectedOrder.validada}
+                        >
+                          <ShieldCheck size={14} />
+                          {selectedOrder.validada ? 'Validada' : 'Validar y Cerrar'}
+                        </button>
+                      </div>
+
+                      <div className="tri-panel-content">
+                        {/* BOTÓN DESTACADO: APLICAR FILTRO CLÁUSULA 12 */}
+                        <div className="clause-12-banner">
+                          <div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: 800, color: '#f8fafc', fontSize: '0.85rem' }}>
+                              <span>Filtro Cláusula 12 y 13</span>
+                              {selectedOrder.calculation?.aplicar_clausula_12_estricta ? (
+                                <span style={{ background: '#059669', color: '#fff', fontSize: '0.65rem', padding: '1px 5px', borderRadius: '4px' }}>
+                                  ACTIVO (ESTRICTO)
+                                </span>
+                              ) : (
+                                <span style={{ background: '#475569', color: '#cbd5e1', fontSize: '0.65rem', padding: '1px 5px', borderRadius: '4px' }}>
+                                  INACTIVO
+                                </span>
+                              )}
+                            </div>
+                            <p style={{ fontSize: '0.72rem', color: '#94a3b8', margin: '2px 0 0' }}>
+                              Descuenta Pushback ($150) y equipos GSE dentro de 70 min.
+                            </p>
+                          </div>
+
+                          <button
+                            type="button"
+                            className={`clause-12-toggle-btn ${selectedOrder.calculation?.aplicar_clausula_12_estricta ? 'active' : ''}`}
+                            onClick={handleToggleClause12}
+                            disabled={isAuditingClause12}
+                          >
+                            {isAuditingClause12 ? (
+                              <span>Calculando...</span>
+                            ) : selectedOrder.calculation?.aplicar_clausula_12_estricta ? (
+                              <>
+                                <Check size={13} /> Desactivar
+                              </>
+                            ) : (
+                              <>
+                                <ShieldCheck size={13} /> Aplicar Filtro
+                              </>
+                            )}
+                          </button>
+                        </div>
+
+                        {/* RESUMEN FINANCIERO DE LA ORDEN */}
+                        <div style={{
+                          display: 'grid',
+                          gridTemplateColumns: '1fr 1fr 1fr',
+                          gap: '0.5rem',
+                          background: '#070d18',
+                          padding: '0.75rem',
+                          borderRadius: '8px',
+                          border: '1px solid rgba(56, 189, 248, 0.2)',
+                          marginBottom: '0.85rem'
+                        }}>
+                          <div>
+                            <div style={{ fontSize: '0.7rem', color: '#94a3b8' }}>Reclamado AVIAM</div>
+                            <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#f87171', fontFamily: 'JetBrains Mono, monospace' }}>
+                              ${(selectedOrder.calculation?.costo_reclamado_aviam || selectedOrder.costo_total_esperado).toFixed(2)}
+                            </div>
+                          </div>
+                          <div>
+                            <div style={{ fontSize: '0.7rem', color: '#94a3b8' }}>Conciliado Arajet</div>
+                            <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#38bdf8', fontFamily: 'JetBrains Mono, monospace' }}>
+                              ${selectedOrder.costo_total_esperado.toFixed(2)}
+                            </div>
+                          </div>
+                          <div>
+                            <div style={{ fontSize: '0.7rem', color: '#94a3b8' }}>Ahorro Obtenido</div>
+                            <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#34d399', fontFamily: 'JetBrains Mono, monospace' }}>
+                              +${(selectedOrder.calculation?.ahorro_auditoria_usd || 0).toFixed(2)}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* ALERTAS CONTRACTUALES */}
+                        {selectedOrder.calculation?.alertas && selectedOrder.calculation.alertas.length > 0 && (
+                          <div style={{ marginBottom: '0.85rem' }}>
+                            <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#f59e0b', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              <AlertTriangle size={13} /> Alertas de Auditoría & Cláusulas ({selectedOrder.calculation.alertas.length}):
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                              {selectedOrder.calculation.alertas.map((al, idx) => (
+                                <div
+                                  key={idx}
+                                  style={{
+                                    background: al.tipo === 'ERROR' || al.tipo === 'INCONSISTENTE' ? 'rgba(239, 68, 68, 0.12)' : 'rgba(245, 158, 11, 0.12)',
+                                    border: `1px solid ${al.tipo === 'ERROR' || al.tipo === 'INCONSISTENTE' ? 'rgba(239, 68, 68, 0.35)' : 'rgba(245, 158, 11, 0.35)'}`,
+                                    borderRadius: '6px',
+                                    padding: '0.45rem 0.65rem',
+                                    fontSize: '0.74rem',
+                                    color: '#f8fafc'
+                                  }}
+                                >
+                                  <strong>[{al.codigo}]</strong> {al.descripcion}
+                                  <span style={{ display: 'block', fontSize: '0.68rem', color: '#94a3b8', marginTop: '2px' }}>
+                                    Regla: {al.clausula} • Impacto: ${al.monto.toFixed(2)}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* TABLA COMPARATIVA LÍNEA POR LÍNEA */}
+                        <div style={{ marginBottom: '1rem' }}>
+                          <div style={{ fontSize: '0.78rem', fontWeight: 800, color: '#f8fafc', marginBottom: '4px' }}>
+                            Comparativa Reclamado vs Conciliado Arajet:
+                          </div>
+                          <div style={{ overflowX: 'auto' }}>
+                            <table className="audit-compare-table">
+                              <thead>
+                                <tr>
+                                  <th>Concepto y Regla</th>
+                                  <th style={{ textAlign: 'center' }}>Papel</th>
+                                  <th style={{ textAlign: 'center' }}>Cant. Audit</th>
+                                  <th style={{ textAlign: 'right' }}>Reclamado</th>
+                                  <th style={{ textAlign: 'right' }}>Conciliado</th>
+                                  <th style={{ textAlign: 'right' }}>Ahorro</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {selectedOrder.calculation?.lineas_costo.map((line, idx) => {
+                                  const claimedLine = line.total_reclamado_aviam ?? line.total;
+                                  const savingLine = line.ahorro_usd ?? Math.max(0, claimedLine - line.total);
+                                  return (
+                                    <tr key={idx}>
+                                      <td>
+                                        <div style={{ fontWeight: 700, color: '#f8fafc' }}>{line.descripcion}</div>
+                                        <div style={{ fontSize: '0.68rem', color: '#94a3b8' }}>{line.regla}</div>
+                                      </td>
+                                      <td style={{ textAlign: 'center', fontFamily: 'JetBrains Mono, monospace', color: '#f87171' }}>
+                                        {line.cantidad_reclamada_aviam ?? line.cantidad}
+                                      </td>
+                                      <td style={{ textAlign: 'center' }}>
+                                        <input
+                                          type="number"
+                                          step="0.5"
+                                          min="0"
+                                          className="audit-input-qty"
+                                          value={line.cantidad}
+                                          onChange={(e) => handleAuditQtyChange(line.codigo, parseFloat(e.target.value) || 0)}
+                                        />
+                                      </td>
+                                      <td style={{ textAlign: 'right', fontFamily: 'JetBrains Mono, monospace', color: '#f87171' }}>
+                                        ${claimedLine.toFixed(2)}
+                                      </td>
+                                      <td style={{ textAlign: 'right', fontFamily: 'JetBrains Mono, monospace', color: '#38bdf8', fontWeight: 700 }}>
+                                        ${line.total.toFixed(2)}
+                                      </td>
+                                      <td style={{ textAlign: 'right' }}>
+                                        {savingLine > 0 ? (
+                                          <span className="ahorro-tag-green">-${savingLine.toFixed(2)}</span>
+                                        ) : (
+                                          <span style={{ color: '#64748b', fontSize: '0.72rem' }}>$0.00</span>
+                                        )}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+
+                        {/* EDICIÓN DE TIEMPOS IN/OUT */}
+                        <div style={{ background: '#070d18', padding: '0.75rem', borderRadius: '8px', border: '1px solid rgba(56,189,248,0.18)' }}>
+                          <div style={{ fontSize: '0.74rem', fontWeight: 700, color: '#94a3b8', marginBottom: '6px' }}>
+                            Datos de Tiempos & Vuelo:
+                          </div>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                            <div>
+                              <label style={{ fontSize: '0.68rem', color: '#64748b' }}>Llegada</label>
+                              <input
+                                type="text"
+                                className="form-input"
+                                style={{ fontSize: '0.75rem', padding: '0.3rem 0.5rem', background: '#0b1424', color: '#f8fafc', border: '1px solid rgba(56,189,248,0.25)' }}
+                                value={editedData?.llegada || ''}
+                                onChange={(e) => handleFieldChange('llegada', e.target.value)}
+                              />
+                            </div>
+                            <div>
+                              <label style={{ fontSize: '0.68rem', color: '#64748b' }}>Salida</label>
+                              <input
+                                type="text"
+                                className="form-input"
+                                style={{ fontSize: '0.75rem', padding: '0.3rem 0.5rem', background: '#0b1424', color: '#f8fafc', border: '1px solid rgba(56,189,248,0.25)' }}
+                                value={editedData?.salida || ''}
+                                onChange={(e) => handleFieldChange('salida', e.target.value)}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <div style={{ padding: '2rem', textAlign: 'center', color: '#64748b' }}>
+                      Selecciona una orden para auditar
+                    </div>
+                  )}
+                </div>
+              </div>
             )}
           </div>
         )}
 
-        {/* PESTAÑA 2: SUBIR PDF CON SELECTOR DE HUB PREVIO */}
+        {/* PESTAÑA 2: SUBIR PDF CON SELECTOR DE HUB */}
         {activeTab === 'subir' && (
           <div style={{ maxWidth: '880px', margin: '0 auto' }}>
-            {/* Paso 1: Selector de HUB Obligatorio antes de cargar */}
             <div style={{ marginBottom: '1.75rem' }}>
               <div style={{
                 background: 'linear-gradient(135deg, #0b192c 0%, #1e3e62 100%)',
@@ -1289,7 +1390,6 @@ export function App() {
                 </span>
               </div>
 
-              {/* Componente Interactivo de Tarjetas de HUB (Limpio) */}
               <HubSelector
                 currentHub={currentHub}
                 onHubChange={(hub) => setCurrentHub(hub)}
@@ -1297,9 +1397,8 @@ export function App() {
               />
             </div>
 
-            {/* Paso 2: Zona de Carga de PDF */}
             <div>
-              <div style={{ marginBottom: '0.5rem', fontWeight: 700, fontSize: '0.95rem', color: '#0f172a' }}>
+              <div style={{ marginBottom: '0.5rem', fontWeight: 700, fontSize: '0.95rem', color: '#f8fafc' }}>
                 2. Carga y Rasterizado del Archivo PDF (Formulario F-RAM)
               </div>
 
@@ -1331,11 +1430,11 @@ export function App() {
                 <div className="upload-icon-circle">
                   <UploadCloud size={32} />
                 </div>
-                <h2 style={{ fontSize: '1.3rem', fontWeight: 800, marginBottom: '0.5rem', color: 'var(--primary-navy)' }}>
+                <h2 style={{ fontSize: '1.3rem', fontWeight: 800, marginBottom: '0.5rem', color: '#f8fafc' }}>
                   Arrastra tu PDF para procesar en HUB {currentHub}
                 </h2>
                 <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem', marginBottom: '1.25rem', maxWidth: '580px', margin: '0 auto 1.25rem' }}>
-                  Formulario F-RAM-AVL-MAG 04 (Rev. 02 Jun-2023). Al cargar el documento se activará la pantalla de carga con adición secuencial de equipos de rampa (escalera, remolcador, cinta de equipajes) y se abrirá directamente en la nueva fecha detectada.
+                  Formulario F-RAM-AVL-MAG 04 (Rev. 02 Jun-2023). Al cargar el documento se rasterizará a 200 DPI y se ejecutará el motor de reglas determinista con desglose de ahorro.
                 </p>
                 <button className="btn-primary" style={{ margin: '0 auto' }}>
                   Seleccionar Archivo PDF para {currentHub}
@@ -1350,9 +1449,9 @@ export function App() {
           <div className="settings-wrap" style={{ maxWidth: '960px', margin: '0 auto' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                <TrendingUp size={28} className="text-sky-600" />
+                <TrendingUp size={28} className="text-sky-400" />
                 <div>
-                  <h2 style={{ fontSize: '1.4rem', fontWeight: 800 }}>
+                  <h2 style={{ fontSize: '1.4rem', fontWeight: 800, color: '#f8fafc' }}>
                     KPI de Volumen Arajet • Concesión 3 [{currentHub}]
                   </h2>
                   <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
@@ -1366,7 +1465,7 @@ export function App() {
                   type="button"
                   className={`hub-pill-btn ${currentHub === 'PUJ' ? 'active' : ''}`}
                   onClick={() => setCurrentHub('PUJ')}
-                  style={{ background: currentHub === 'PUJ' ? '#0284c7' : '#e2e8f0', color: currentHub === 'PUJ' ? '#fff' : '#0f172a' }}
+                  style={{ background: currentHub === 'PUJ' ? '#0284c7' : '#1e293b', color: currentHub === 'PUJ' ? '#fff' : '#94a3b8' }}
                 >
                   PUJ
                 </button>
@@ -1374,7 +1473,7 @@ export function App() {
                   type="button"
                   className={`hub-pill-btn ${currentHub === 'SDQ' ? 'active' : ''}`}
                   onClick={() => setCurrentHub('SDQ')}
-                  style={{ background: currentHub === 'SDQ' ? '#0284c7' : '#e2e8f0', color: currentHub === 'SDQ' ? '#fff' : '#0f172a' }}
+                  style={{ background: currentHub === 'SDQ' ? '#0284c7' : '#1e293b', color: currentHub === 'SDQ' ? '#fff' : '#94a3b8' }}
                 >
                   SDQ
                 </button>
@@ -1405,9 +1504,9 @@ export function App() {
               </div>
             </div>
 
-            <div style={{ background: '#f8fafc', padding: '1.25rem', borderRadius: '10px', border: '1px solid #e2e8f0', fontSize: '0.88rem' }}>
-              <h3 style={{ fontWeight: 700, marginBottom: '0.5rem', color: '#0f172a' }}>📌 Regla Contractual Arajet (Concesión 3):</h3>
-              <p style={{ color: '#334155', lineHeight: 1.6 }}>
+            <div style={{ background: '#0b1424', padding: '1.25rem', borderRadius: '10px', border: '1px solid rgba(56, 189, 248, 0.25)', fontSize: '0.88rem' }}>
+              <h3 style={{ fontWeight: 700, marginBottom: '0.5rem', color: '#38bdf8' }}>📌 Regla Contractual Arajet (Concesión 3):</h3>
+              <p style={{ color: '#cbd5e1', lineHeight: 1.6 }}>
                 "Si en cualquier mes el Carrier opera menos de 226 vuelos Y el promedio móvil de 4 meses también cae por debajo de 226 vuelos, AVIAM se reserva el derecho de emitir una factura de ajuste aplicando retroactivamente las tarifas estándar del Tarifario 2022/2025 en lugar de los precios concesionados."
               </p>
             </div>
@@ -1419,7 +1518,7 @@ export function App() {
           <div className="settings-wrap" style={{ maxWidth: '1000px', margin: '0 auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
               <div>
-                <h2 style={{ fontSize: '1.4rem', fontWeight: 800 }}>Configuración de Tarifas & Reglas (`tarifas.json`)</h2>
+                <h2 style={{ fontSize: '1.4rem', fontWeight: 800, color: '#f8fafc' }}>Configuración de Tarifas & Reglas (`tarifas.json`)</h2>
                 <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
                   Edita valores, recargos por hora, feriados dominicanos y cláusulas en vivo.
                 </p>
@@ -1452,8 +1551,8 @@ export function App() {
                 fontSize: '0.82rem',
                 padding: '1rem',
                 borderRadius: '8px',
-                border: '1px solid #cbd5e1',
-                background: '#0f172a',
+                border: '1px solid rgba(56, 189, 248, 0.3)',
+                background: '#070d18',
                 color: '#f8fafc',
                 lineHeight: 1.5
               }}
@@ -1464,271 +1563,224 @@ export function App() {
         )}
       </main>
 
-      {/* PANEL SPLIT-VIEW (DETALLE Y EDICIÓN) */}
-      {selectedOrder && (
-        <div className="modal-overlay">
-          <div className="modal-content-split">
-            {/* Header del Modal */}
-            <div className="modal-header">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                <span className="order-number" style={{ fontSize: '1.3rem' }}>
-                  Orden #{selectedOrder.numero_orden}
-                </span>
-                <span className="brand-hub-indicator">
-                  {selectedOrder.hub || currentHub}
-                </span>
-                <span className="position-badge">POS: {selectedOrder.posicion || 'B29'}</span>
-                <span className={`status-pill ${selectedOrder.estado.toLowerCase()}`}>
-                  {selectedOrder.estado}
-                </span>
-                <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                  Página {selectedOrder.pagina}
-                </span>
+      {/* MODAL PARA REGISTRAR ORDEN MANUAL */}
+      {showManualModal && (
+        <div className="manual-modal-overlay">
+          <div className="manual-modal-card">
+            <div style={{ padding: '1rem 1.5rem', background: '#0f1c32', borderBottom: '1px solid rgba(56, 189, 248, 0.2)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 800, color: '#f8fafc' }}>
+                <PlusCircle size={18} className="text-emerald-400" />
+                <span>Registrar Orden Manual de Rampa ({currentHub})</span>
               </div>
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                <button
-                  className="btn-success"
-                  onClick={handleValidateOrder}
-                  disabled={savingOrder || selectedOrder.validada}
-                >
-                  <ShieldCheck size={16} /> {selectedOrder.validada ? 'Orden Validada' : 'Marcar como Validada'}
-                </button>
-                <button
-                  onClick={() => setSelectedOrder(null)}
-                  style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: '0.4rem' }}
-                >
-                  <X size={22} color="#64748b" />
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={() => setShowManualModal(false)}
+                style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer' }}
+              >
+                <X size={18} />
+              </button>
             </div>
 
-            {/* Cuerpo Split: Imagen Escaneada a la izquierda, Datos y Cálculos a la derecha */}
-            <div className="modal-body-split">
-              {/* Panel Izquierdo: Visor de Imagen con Zoom */}
-              <div className="image-viewer-pane">
-                <div className="image-toolbar">
-                  <span>Visor de Documento F-RAM Original</span>
-                  <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.35rem' }}>
-                    <button className="image-tool-btn" onClick={() => setZoomLevel(prev => Math.min(prev + 0.25, 3))}>
-                      <ZoomIn size={14} /> Zoom +
-                    </button>
-                    <button className="image-tool-btn" onClick={() => setZoomLevel(prev => Math.max(prev - 0.25, 0.5))}>
-                      <ZoomOut size={14} /> Zoom -
-                    </button>
-                    <button className="image-tool-btn" onClick={() => setZoomLevel(1)}>
-                      <RotateCcw size={14} /> Reset
-                    </button>
-                  </div>
+            <form onSubmit={handleSaveManualOrder} style={{ padding: '1.25rem', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.75rem' }}>
+                <div>
+                  <label style={{ fontSize: '0.75rem', color: '#94a3b8', display: 'block', marginBottom: '3px' }}># Orden de Servicio *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ej. 458120"
+                    className="form-input"
+                    style={{ background: '#070d18', color: '#38bdf8', fontFamily: 'JetBrains Mono, monospace', fontWeight: 700 }}
+                    value={manualForm.numero_orden}
+                    onChange={(e) => setManualForm({ ...manualForm, numero_orden: e.target.value })}
+                  />
                 </div>
-
-                <div className="image-scroll-box">
-                  <img
-                    src={`/api/orders/${selectedOrder.numero_orden}/image`}
-                    alt={`Orden ${selectedOrder.numero_orden}`}
-                    className="scanned-order-img"
-                    style={{ transform: `scale(${zoomLevel})` }}
+                <div>
+                  <label style={{ fontSize: '0.75rem', color: '#94a3b8', display: 'block', marginBottom: '3px' }}>Matrícula</label>
+                  <input
+                    type="text"
+                    placeholder="Ej. HI1098"
+                    className="form-input"
+                    style={{ background: '#070d18', color: '#f8fafc', fontWeight: 700 }}
+                    value={manualForm.matricula}
+                    onChange={(e) => setManualForm({ ...manualForm, matricula: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.75rem', color: '#94a3b8', display: 'block', marginBottom: '3px' }}>Posición / Gate</label>
+                  <input
+                    type="text"
+                    placeholder="Ej. A2 / B29"
+                    className="form-input"
+                    style={{ background: '#070d18', color: '#f8fafc' }}
+                    value={manualForm.posicion}
+                    onChange={(e) => setManualForm({ ...manualForm, posicion: e.target.value })}
                   />
                 </div>
               </div>
 
-              {/* Panel Derecho: Datos Extraídos Editables & Desglose Determinista */}
-              <div className="data-editor-pane">
-                {/* Alertas Detectadas */}
-                {selectedOrder.calculation?.alertas.length > 0 && (
-                  <div style={{ marginBottom: '1.5rem' }}>
-                    <h4 className="section-subtitle" style={{ color: '#dc2626' }}>
-                      <AlertTriangle size={16} /> Alertas de Liquidación & Extracción
-                    </h4>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                      {selectedOrder.calculation.alertas.map((al, idx) => (
-                        <div
-                          key={idx}
-                          style={{
-                            background: al.tipo === 'ERROR' || al.tipo === 'INCONSISTENTE' ? '#fef2f2' : '#fffbeb',
-                            border: `1px solid ${al.tipo === 'ERROR' || al.tipo === 'INCONSISTENTE' ? '#fecaca' : '#fde68a'}`,
-                            padding: '0.6rem 0.85rem',
-                            borderRadius: '8px',
-                            fontSize: '0.8rem'
-                          }}
-                        >
-                          <strong>[{al.codigo}]</strong> {al.descripcion}
-                          <span style={{ display: 'block', fontSize: '0.72rem', color: '#64748b', marginTop: '2px' }}>
-                            Regla aplicada: {al.clausula}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Formulario Editable */}
-                <h4 className="section-subtitle">
-                  <FileText size={16} /> Información Operacional (Editable en vivo)
-                </h4>
-
-                <div className="form-grid-2">
-                  <div className="form-field">
-                    <label className="form-label">Fecha / Hora Llegada</label>
-                    <input
-                      type="text"
-                      className="form-input"
-                      value={editedData?.llegada || ''}
-                      onChange={(e) => handleFieldChange('llegada', e.target.value)}
-                    />
-                  </div>
-                  <div className="form-field">
-                    <label className="form-label">Fecha / Hora Salida</label>
-                    <input
-                      type="text"
-                      className="form-input"
-                      value={editedData?.salida || ''}
-                      onChange={(e) => handleFieldChange('salida', e.target.value)}
-                    />
-                  </div>
-                  <div className="form-field">
-                    <label className="form-label">Vuelo Entrante</label>
-                    <input
-                      type="text"
-                      className="form-input"
-                      value={editedData?.vuelo_entrante || ''}
-                      onChange={(e) => handleFieldChange('vuelo_entrante', e.target.value)}
-                    />
-                  </div>
-                  <div className="form-field">
-                    <label className="form-label">Vuelo Saliente</label>
-                    <input
-                      type="text"
-                      className="form-input"
-                      value={editedData?.vuelo_saliente || ''}
-                      onChange={(e) => handleFieldChange('vuelo_saliente', e.target.value)}
-                    />
-                  </div>
-                  <div className="form-field">
-                    <label className="form-label">Matrícula</label>
-                    <input
-                      type="text"
-                      className="form-input"
-                      value={editedData?.matricula || ''}
-                      onChange={(e) => handleFieldChange('matricula', e.target.value)}
-                    />
-                  </div>
-                  <div className="form-field">
-                    <label className="form-label">Posición / Gate</label>
-                    <input
-                      type="text"
-                      className="form-input"
-                      value={editedData?.posicion || ''}
-                      onChange={(e) => handleFieldChange('posicion', e.target.value)}
-                    />
-                  </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '0.75rem' }}>
+                <div>
+                  <label style={{ fontSize: '0.75rem', color: '#94a3b8', display: 'block', marginBottom: '3px' }}>Vuelo In</label>
+                  <input
+                    type="text"
+                    placeholder="DM1020"
+                    className="form-input"
+                    style={{ background: '#070d18', color: '#f8fafc' }}
+                    value={manualForm.vuelo_entrante}
+                    onChange={(e) => setManualForm({ ...manualForm, vuelo_entrante: e.target.value })}
+                  />
                 </div>
-
-                {/* Tabla de Desglose de Liquidación con Cláusulas */}
-                <h4 className="section-subtitle">
-                  <DollarSign size={16} /> Desglose de Costos (Motor Determinista)
-                </h4>
-
-                <table className="breakdown-table">
-                  <thead>
-                    <tr>
-                      <th>Concepto / Servicio</th>
-                      <th>Cant.</th>
-                      <th>Precio Unit.</th>
-                      <th>Total USD</th>
-                      <th>Tipo</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {selectedOrder.calculation?.lineas_costo.map((line, idx) => (
-                      <tr key={idx}>
-                        <td>
-                          <strong>{line.descripcion}</strong>
-                          <span className="rule-citation">{line.regla}</span>
-                        </td>
-                        <td>{line.cantidad} {line.unidad}</td>
-                        <td>${line.precio_unitario.toFixed(2)}</td>
-                        <td style={{ fontWeight: 700, fontFamily: 'JetBrains Mono, monospace' }}>
-                          ${line.total.toFixed(2)}
-                        </td>
-                        <td>
-                          <span style={{
-                            fontSize: '0.7rem',
-                            fontWeight: 600,
-                            padding: '2px 6px',
-                            borderRadius: '4px',
-                            background: line.es_adicional ? '#fff7ed' : '#f0fdf4',
-                            color: line.es_adicional ? '#c2410c' : '#15803d'
-                          }}>
-                            {line.es_adicional ? 'Adicional' : 'Incluido'}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot>
-                    <tr style={{ background: '#f8fafc', fontWeight: 800 }}>
-                      <td colSpan={3} style={{ textAlign: 'right', padding: '0.85rem' }}>
-                        TOTAL ESPERADO LIQUIDACIÓN:
-                      </td>
-                      <td colSpan={2} style={{ fontSize: '1.15rem', color: 'var(--primary-navy)', fontFamily: 'JetBrains Mono, monospace', padding: '0.85rem' }}>
-                        ${selectedOrder.costo_total_esperado.toFixed(2)} USD
-                      </td>
-                    </tr>
-                  </tfoot>
-                </table>
-
-                {/* Observaciones y Notas Manuscritas */}
-                <div style={{ background: '#f8fafc', padding: '1rem', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '0.82rem' }}>
-                  <span style={{ fontWeight: 700, color: '#334155' }}>Observaciones Manuscritas:</span>
-                  <p style={{ fontFamily: 'JetBrains Mono, monospace', color: '#0369a1', marginTop: '4px' }}>
-                    {selectedOrder.data?.observaciones_tiempos?.map((t: any) => t.raw).join(' | ') || selectedOrder.data?.observaciones_texto || 'Sin observaciones'}
-                  </p>
-                  <div style={{ marginTop: '0.5rem', display: 'flex', gap: '1.5rem', fontSize: '0.78rem', color: '#64748b' }}>
-                    <span>AVIAM: <strong>{selectedOrder.data?.responsable_aviam || 'Firma detectada'}</strong></span>
-                    <span>Aerolínea: <strong>{selectedOrder.data?.representante_aerolinea || 'Firma detectada'}</strong></span>
-                  </div>
+                <div>
+                  <label style={{ fontSize: '0.75rem', color: '#94a3b8', display: 'block', marginBottom: '3px' }}>Origen</label>
+                  <input
+                    type="text"
+                    placeholder="MIA"
+                    className="form-input"
+                    style={{ background: '#070d18', color: '#f8fafc' }}
+                    value={manualForm.origen}
+                    onChange={(e) => setManualForm({ ...manualForm, origen: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.75rem', color: '#94a3b8', display: 'block', marginBottom: '3px' }}>Vuelo Out</label>
+                  <input
+                    type="text"
+                    placeholder="DM1021"
+                    className="form-input"
+                    style={{ background: '#070d18', color: '#f8fafc' }}
+                    value={manualForm.vuelo_saliente}
+                    onChange={(e) => setManualForm({ ...manualForm, vuelo_saliente: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.75rem', color: '#94a3b8', display: 'block', marginBottom: '3px' }}>Destino</label>
+                  <input
+                    type="text"
+                    placeholder="SDQ"
+                    className="form-input"
+                    style={{ background: '#070d18', color: '#f8fafc' }}
+                    value={manualForm.destino}
+                    onChange={(e) => setManualForm({ ...manualForm, destino: e.target.value })}
+                  />
                 </div>
               </div>
-            </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                <div>
+                  <label style={{ fontSize: '0.75rem', color: '#94a3b8', display: 'block', marginBottom: '3px' }}>Fecha y Hora Llegada *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="2026-05-22T10:00"
+                    className="form-input"
+                    style={{ background: '#070d18', color: '#f8fafc', fontFamily: 'JetBrains Mono, monospace' }}
+                    value={manualForm.llegada}
+                    onChange={(e) => setManualForm({ ...manualForm, llegada: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.75rem', color: '#94a3b8', display: 'block', marginBottom: '3px' }}>Fecha y Hora Salida *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="2026-05-22T11:00"
+                    className="form-input"
+                    style={{ background: '#070d18', color: '#f8fafc', fontFamily: 'JetBrains Mono, monospace' }}
+                    value={manualForm.salida}
+                    onChange={(e) => setManualForm({ ...manualForm, salida: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              {/* Casillas de Servicios F-RAM */}
+              <div>
+                <label style={{ fontSize: '0.78rem', fontWeight: 700, color: '#38bdf8', display: 'block', marginBottom: '6px' }}>
+                  Servicios y Equipos Marcados en el Papel:
+                </label>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', background: '#070d18', padding: '0.75rem', borderRadius: '8px', border: '1px solid rgba(56,189,248,0.2)' }}>
+                  {manualForm.servicios.map((s: any, idx: number) => (
+                    <label key={s.codigo} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.76rem', color: '#f8fafc', cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={s.marcado}
+                        onChange={(e) => {
+                          const updated = [...manualForm.servicios];
+                          updated[idx] = { ...updated[idx], marcado: e.target.checked };
+                          setManualForm({ ...manualForm, servicios: updated });
+                        }}
+                      />
+                      <span>{s.codigo}</span>
+                      {s.valor_raw !== undefined && s.marcado && (
+                        <input
+                          type="text"
+                          style={{ width: '45px', padding: '1px 4px', fontSize: '0.7rem', background: '#0b1424', border: '1px solid #38bdf8', color: '#38bdf8', borderRadius: '3px', marginLeft: 'auto' }}
+                          value={s.valor_raw}
+                          onChange={(e) => {
+                            const updated = [...manualForm.servicios];
+                            updated[idx] = { ...updated[idx], valor_raw: e.target.value };
+                            setManualForm({ ...manualForm, servicios: updated });
+                          }}
+                        />
+                      )}
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.5rem' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowManualModal(false)}
+                  style={{ padding: '0.5rem 1rem', borderRadius: '6px', background: '#1e293b', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '0.85rem' }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="btn-success"
+                  style={{ padding: '0.5rem 1.25rem', fontSize: '0.85rem' }}
+                >
+                  Guardar y Auditar Orden
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
 
-      {/* Modal de Confirmación para Eliminar Lote de Fecha */}
+      {/* Modal de Confirmación para Eliminar Lote */}
       {dateToDelete && (
-        <div className="modal-backdrop" style={{ zIndex: 1200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div className="manual-modal-overlay">
           <div style={{
-            background: '#ffffff',
-            borderRadius: '16px',
+            background: '#0b1424',
+            borderRadius: '14px',
             maxWidth: '460px',
             width: '90%',
             padding: '1.75rem',
-            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
-            border: '1px solid #fee2e2'
+            border: '1px solid rgba(239, 68, 68, 0.4)',
+            color: '#f8fafc'
           }}>
             <div style={{
-              width: '48px',
-              height: '48px',
+              width: '44px',
+              height: '44px',
               borderRadius: '50%',
-              background: '#fef2f2',
-              color: '#dc2626',
+              background: 'rgba(239, 68, 68, 0.15)',
+              color: '#ef4444',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               marginBottom: '1rem'
             }}>
-              <Trash2 size={24} />
+              <Trash2 size={22} />
             </div>
 
-            <h3 style={{ fontSize: '1.2rem', fontWeight: 800, color: '#0f172a', marginBottom: '0.5rem' }}>
-              ¿Eliminar lote de {dateToDelete}?
+            <h3 style={{ fontSize: '1.15rem', fontWeight: 800, marginBottom: '0.5rem' }}>
+              ¿Eliminar lote del {dateToDelete}?
             </h3>
 
-            <p style={{ fontSize: '0.88rem', color: '#64748b', lineHeight: 1.5, marginBottom: '1.5rem' }}>
+            <p style={{ fontSize: '0.82rem', color: '#94a3b8', lineHeight: 1.5, marginBottom: '1.5rem' }}>
               Se eliminarán de forma permanente todas las órdenes registradas para la fecha <strong>{dateToDelete}</strong> en <strong>HUB {currentHub}</strong>.
-              <br /><br />
-              Usa esta opción si la carga estuvo incompleta o con errores para que puedas <strong>volver a subir el archivo PDF</strong> desde cero.
             </p>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
@@ -1737,13 +1789,12 @@ export function App() {
                 disabled={isDeletingDate}
                 onClick={() => setDateToDelete(null)}
                 style={{
-                  padding: '0.55rem 1rem',
-                  borderRadius: '8px',
-                  border: '1px solid #cbd5e1',
-                  background: '#f8fafc',
-                  color: '#475569',
-                  fontWeight: 600,
-                  fontSize: '0.85rem',
+                  padding: '0.5rem 1rem',
+                  borderRadius: '6px',
+                  border: '1px solid #334155',
+                  background: '#1e293b',
+                  color: '#94a3b8',
+                  fontSize: '0.82rem',
                   cursor: 'pointer'
                 }}
               >
@@ -1754,30 +1805,21 @@ export function App() {
                 disabled={isDeletingDate}
                 onClick={() => handleDeleteDate(dateToDelete)}
                 style={{
-                  padding: '0.55rem 1.25rem',
-                  borderRadius: '8px',
+                  padding: '0.5rem 1.25rem',
+                  borderRadius: '6px',
                   border: 'none',
                   background: '#dc2626',
                   color: '#ffffff',
                   fontWeight: 700,
-                  fontSize: '0.85rem',
+                  fontSize: '0.82rem',
                   cursor: isDeletingDate ? 'not-allowed' : 'pointer',
                   display: 'flex',
                   alignItems: 'center',
                   gap: '6px'
                 }}
               >
-                {isDeletingDate ? (
-                  <>
-                    <div className="ramp-spinner" style={{ width: '14px', height: '14px' }} />
-                    <span>Eliminando...</span>
-                  </>
-                ) : (
-                  <>
-                    <Trash2 size={15} />
-                    <span>Sí, Eliminar Lote</span>
-                  </>
-                )}
+                <Trash2 size={14} />
+                <span>{isDeletingDate ? 'Eliminando...' : 'Sí, Eliminar Lote'}</span>
               </button>
             </div>
           </div>

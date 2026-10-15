@@ -2870,4 +2870,364 @@ body {
 .stand-guidance-card.inconsistente::before { background: #ef4444; }
 .stand-guidance-card.revisar::before { background: #94a3b8; }
 
+/* ========================================================
+   ESTACIÓN DE AUDITORÍA Y CONCILIACIÓN DIARIA (PERSEFONE)
+   ======================================================== */
+
+/* 1. Cinta de Historial de Días Cargados */
+.dates-history-strip {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  overflow-x: auto;
+  padding: 0.5rem 0;
+  margin-bottom: 1.25rem;
+  scrollbar-width: thin;
+}
+
+.dates-history-strip::-webkit-scrollbar {
+  height: 5px;
+}
+
+.dates-history-strip::-webkit-scrollbar-thumb {
+  background: rgba(56, 189, 248, 0.3);
+  border-radius: 3px;
+}
+
+.history-date-chip {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 0.85rem;
+  background: #0f1c32;
+  border: 1px solid rgba(56, 189, 248, 0.22);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-size: 0.82rem;
+  color: #f8fafc;
+}
+
+.history-date-chip:hover {
+  background: #172a4c;
+  border-color: #38bdf8;
+  transform: translateY(-1px);
+}
+
+.history-date-chip.active {
+  background: #0284c7;
+  border-color: #38bdf8;
+  box-shadow: 0 0 12px rgba(2, 132, 199, 0.4);
+}
+
+.history-chip-date {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 700;
+}
+
+.history-chip-badge {
+  background: rgba(255, 255, 255, 0.15);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.history-chip-usd {
+  color: #38bdf8;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.history-date-chip.active .history-chip-usd {
+  color: #ffffff;
+}
+
+/* 2. Barra de Navegación de Fecha */
+.date-navigator-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: #0b1424;
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  border-radius: 8px;
+  padding: 0.25rem 0.5rem;
+}
+
+.date-nav-arrow-btn {
+  background: transparent;
+  border: none;
+  color: #38bdf8;
+  cursor: pointer;
+  padding: 0.3rem 0.5rem;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  transition: background 0.15s;
+}
+
+.date-nav-arrow-btn:hover {
+  background: rgba(56, 189, 248, 0.2);
+}
+
+/* 3. Header Action Buttons */
+.hdr-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.45rem 0.85rem;
+  border-radius: 7px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  border: none;
+  transition: all 0.2s;
+}
+
+.hdr-btn-upload {
+  background: #0284c7;
+  color: #ffffff;
+}
+.hdr-btn-upload:hover {
+  background: #0369a1;
+}
+
+.hdr-btn-manual {
+  background: #059669;
+  color: #ffffff;
+}
+.hdr-btn-manual:hover {
+  background: #047857;
+}
+
+.hdr-btn-csv {
+  background: #ffffff;
+  color: #0f172a;
+}
+.hdr-btn-csv:hover {
+  background: #f1f5f9;
+}
+
+/* 4. Estación de Auditoría Split-Screen de 3 Paneles */
+.audit-tri-panel-layout {
+  display: grid;
+  grid-template-columns: 320px 1fr 480px;
+  gap: 1rem;
+  height: calc(100vh - 210px);
+  min-height: 600px;
+  margin-top: 1rem;
+}
+
+@media (max-width: 1400px) {
+  .audit-tri-panel-layout {
+    grid-template-columns: 290px 1fr 420px;
+  }
+}
+
+@media (max-width: 1100px) {
+  .audit-tri-panel-layout {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
+}
+
+.tri-panel {
+  background: #0b1424;
+  border: 1px solid rgba(56, 189, 248, 0.2);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.tri-panel-header {
+  padding: 0.75rem 1rem;
+  background: #0f1c32;
+  border-bottom: 1px solid rgba(56, 189, 248, 0.18);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.tri-panel-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.85rem;
+}
+
+/* Tarjeta en la lista lateral */
+.audit-list-item {
+  background: #070d18;
+  border: 1px solid rgba(56, 189, 248, 0.15);
+  border-radius: 8px;
+  padding: 0.75rem;
+  margin-bottom: 0.5rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  position: relative;
+}
+
+.audit-list-item:hover {
+  border-color: #38bdf8;
+  background: #0c182e;
+}
+
+.audit-list-item.selected {
+  border-color: #38bdf8;
+  background: #0f2347;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.25);
+}
+
+.audit-list-item.selected::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 4px;
+  background: #38bdf8;
+  border-top-left-radius: 8px;
+  border-bottom-left-radius: 8px;
+}
+
+/* Card Cláusula 12 Toggle Destacado */
+.clause-12-banner {
+  background: linear-gradient(135deg, rgba(2, 132, 199, 0.15) 0%, rgba(14, 165, 233, 0.05) 100%);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  border-radius: 10px;
+  padding: 0.85rem 1rem;
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.clause-12-toggle-btn {
+  background: #0284c7;
+  color: #ffffff;
+  border: 1px solid #38bdf8;
+  border-radius: 6px;
+  padding: 0.45rem 0.85rem;
+  font-weight: 700;
+  font-size: 0.8rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  transition: all 0.15s;
+}
+
+.clause-12-toggle-btn.active {
+  background: #059669;
+  border-color: #34d399;
+  box-shadow: 0 0 10px rgba(5, 150, 105, 0.4);
+}
+
+/* 5. Tabla Comparativa de Auditoría */
+.audit-compare-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  margin-top: 0.75rem;
+}
+
+.audit-compare-table th {
+  background: #0f1c32;
+  color: #94a3b8;
+  text-transform: uppercase;
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  padding: 0.5rem 0.6rem;
+  text-align: left;
+  border-bottom: 1px solid rgba(56, 189, 248, 0.2);
+}
+
+.audit-compare-table td {
+  padding: 0.55rem 0.6rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  color: #f8fafc;
+}
+
+.audit-compare-table tr:hover td {
+  background: rgba(56, 189, 248, 0.04);
+}
+
+.audit-input-qty {
+  width: 55px;
+  background: #070d18;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  border-radius: 4px;
+  color: #38bdf8;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 700;
+  padding: 0.25rem 0.4rem;
+  text-align: center;
+  font-size: 0.82rem;
+}
+
+.audit-input-qty:focus {
+  outline: none;
+  border-color: #38bdf8;
+  box-shadow: 0 0 6px rgba(56, 189, 248, 0.4);
+}
+
+/* Badges de ahorro */
+.ahorro-tag-green {
+  background: rgba(16, 185, 129, 0.18);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+}
+
+.reclamado-tag-aviam {
+  color: #f87171;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 700;
+}
+
+.conciliado-tag-arajet {
+  color: #38bdf8;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 800;
+}
+
+/* Modal Orden Manual */
+.manual-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(7, 13, 24, 0.82);
+  backdrop-filter: blur(6px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+
+.manual-modal-card {
+  background: #0b1424;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  border-radius: 14px;
+  box-shadow: 0 25px 50px rgba(0,0,0,0.6);
+  width: 100%;
+  max-width: 680px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: #f8fafc;
+}
+
+
 

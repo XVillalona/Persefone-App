@@ -24,5 +24,37 @@ class TestApiEndpoints(unittest.TestCase):
         orders = get_orders_by_date("2026-05-22", "PUJ")
         self.assertIsInstance(orders, list)
 
+    def test_app_endpoints_if_fastapi_available(self):
+        """Prueba los nuevos endpoints en app.py si FastAPI está instalado en el entorno"""
+        try:
+            from app import create_manual_order, audit_clause_12, export_csv
+            # 1. Crear orden manual
+            payload = {
+                "numero_orden": "TEST_UNIT_MANUAL",
+                "fecha_agrupacion": "2026-05-22",
+                "llegada": "2026-05-22T10:00",
+                "salida": "2026-05-22T11:00",
+                "matricula": "HI1098",
+                "servicios": [{"codigo": "RAMP_PACKAGE", "marcado": True}],
+                "hub": "PUJ"
+            }
+            res_manual = create_manual_order(payload)
+            self.assertEqual(res_manual["status"], "created")
+            self.assertEqual(res_manual["numero_orden"], "TEST_UNIT_MANUAL")
+
+            # 2. Auditar cláusula 12
+            res_audit = audit_clause_12("TEST_UNIT_MANUAL", strict=True)
+            self.assertEqual(res_audit["status"], "audited")
+            self.assertTrue(res_audit["aplicar_clausula_12_estricta"])
+
+            # 3. Exportar CSV
+            res_csv = export_csv(fecha="2026-05-22", hub="PUJ")
+            self.assertGreater(len(res_csv.body), 0)
+            self.assertIn(b"Reclamado_AVIAM_USD", res_csv.body)
+            self.assertIn(b"Conciliado_Arajet_USD", res_csv.body)
+        except ImportError:
+            pass
+
 if __name__ == '__main__':
     unittest.main()
+
